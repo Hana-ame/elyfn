@@ -6,33 +6,48 @@ const deepEqual = require('./deepEqual');
 async function execute() {
   const { code, taskType, payload } = workerData;
   
-  // 1. 构建一个受控的沙箱环境
+  // 1. 构建严格受控的沙箱环境
   const sandbox = {
-    // 允许用户使用 console.log 调试代码 (输出到服务器控制台)
     console: console,
+    setTimeout, clearTimeout,
+    setInterval, clearInterval,
     
-    // 注入自定义的 require 函数
-    require: (moduleName) => {
-      // 安全黑名单：禁止加载高危 Node.js 核心模块
-      const FORBIDDEN_MODULES =['fs', 'child_process', 'worker_threads', 'os', 'vm', 'cluster'];
-      
-      if (FORBIDDEN_MODULES.includes(moduleName) || moduleName.startsWith('node:')) {
-        throw new Error(`Security Exception: Module '${moduleName}' is strictly forbidden.`);
+    // 自定义异步 require，仅支持远程 URL 加载
+    require: async (url) => {
+      if (typeof url !== 'string' || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+        throw new Error(`Security Exception: Only URL imports are allowed. Blocked: '${url}'`);
       }
       
-      // 允许加载其他的内置模块 (如 'crypto') 和 第三方 NPM 模块 (如 'lodash')
       try {
-        return require(moduleName);
+        // 请求远程代码
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} ${response.statusText}`);
+        }
+        const moduleCode = await response.text();
+        
+        // 创建子沙箱执行远程库，防止变量污染
+        const exports = {};
+        const module = { exports };
+        const moduleSandbox = { module, exports, console, setTimeout, clearTimeout };
+        moduleSandbox.global = moduleSandbox; 
+        
+        vm.createContext(moduleSandbox);
+        const script = new vm.Script(moduleCode, { filename: url });
+        
+        script.runInContext(moduleSandbox, { timeout: 2000 }); 
+        return moduleSandbox.module.exports;
       } catch (err) {
-        throw new Error(`Cannot find module '${moduleName}'. Is it installed on the server?`);
+        throw new Error(`Failed to load remote module from '${url}': ${err.message}`);
       }
     }
   };
 
   const context = vm.createContext(sandbox);
   
+  // 2. 将代码包裹在 async 闭包中，允许用户代码使用 await
   const wrappedCode = `
-    (() => {
+    (async () => {
       ${code}
       return {
         main: typeof main !== 'undefined' ? main : undefined,
@@ -41,15 +56,17 @@ async function execute() {
     })();
   `;
 
-  // 内部超时软限制
   const script = new vm.Script(wrappedCode, { filename: 'function.js' });
-  const extracted = script.runInContext(context, { timeout: 4500 });
+  
+  // 因为外层是 async，这里返回的是一个 Promise
+  const extractedPromise = script.runInContext(context, { timeout: 4500 });
+  const extracted = await extractedPromise; 
 
-  if (typeof extracted.main !== 'function') {
+  if (!extracted || typeof extracted.main !== 'function') {
     throw new Error('No valid main function found');
   }
 
-  // 场景A: 测试上传代码
+  // 3. 执行测试用例
   if (taskType === 'test') {
     const testCases = extracted.testCases;
     if (!Array.isArray(testCases)) throw new Error('No valid testCases array found in code');
@@ -73,7 +90,7 @@ async function execute() {
     parentPort.postMessage({ passed: errors.length === 0, errors });
   } 
   
-  // 场景B: 正常执行请求
+  // 4. 处理常规执行
   else if (taskType === 'execute') {
     const result = await extracted.main(payload);
     parentPort.postMessage({ result });
