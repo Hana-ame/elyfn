@@ -1,51 +1,81 @@
 // utils/workerExecutor.js
 const { parentPort, workerData } = require('worker_threads');
 const vm = require('vm');
+const fs = require('fs').promises;
+const path = require('path');
+const crypto = require('crypto');
 const deepEqual = require('./deepEqual');
+
+// 统一的依赖缓存目录，存放在项目根目录下的 .module_cache 文件夹中
+const CACHE_DIR = path.join(process.cwd(), '.module_cache');
 
 async function execute() {
   const { code, taskType, payload } = workerData;
   
-  // 1. 构建严格受控的沙箱环境
+  // 内存缓存：防止同一个代码文件里 require 两次相同的 URL 导致重复执行编译
+  const moduleMemoryCache = {};
+  
   const sandbox = {
     console: console,
     setTimeout, clearTimeout,
     setInterval, clearInterval,
     
-    // 自定义异步 require，仅支持远程 URL 加载
+    // 带有缓存机制的异步 require
     require: async (url) => {
       if (typeof url !== 'string' || (!url.startsWith('http://') && !url.startsWith('https://'))) {
         throw new Error(`Security Exception: Only URL imports are allowed. Blocked: '${url}'`);
       }
       
+      // 1. 命中内存缓存（同一函数内重复引入）
+      if (moduleMemoryCache[url]) {
+        return moduleMemoryCache[url];
+      }
+
+      // 将 URL 转换为安全的 MD5 文件名
+      const urlHash = crypto.createHash('md5').update(url).digest('hex');
+      const cacheFile = path.join(CACHE_DIR, `${urlHash}.js`);
+      
+      let moduleCode = '';
+      
       try {
-        // 请求远程代码
+        // 2. 命中磁盘缓存：尝试从本地读取已经下载过的依赖
+        moduleCode = await fs.readFile(cacheFile, 'utf-8');
+      } catch (err) {
+        // 3. 缓存未命中：从网络拉取依赖
         const response = await fetch(url);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status} ${response.statusText}`);
         }
-        const moduleCode = await response.text();
+        moduleCode = await response.text();
         
-        // 创建子沙箱执行远程库，防止变量污染
-        const exports = {};
-        const module = { exports };
-        const moduleSandbox = { module, exports, console, setTimeout, clearTimeout };
-        moduleSandbox.global = moduleSandbox; 
-        
-        vm.createContext(moduleSandbox);
-        const script = new vm.Script(moduleCode, { filename: url });
-        
-        script.runInContext(moduleSandbox, { timeout: 2000 }); 
-        return moduleSandbox.module.exports;
-      } catch (err) {
-        throw new Error(`Failed to load remote module from '${url}': ${err.message}`);
+        // 异步将代码保存到磁盘缓存中（供下次调用或其他请求使用）
+        try {
+          await fs.mkdir(CACHE_DIR, { recursive: true });
+          await fs.writeFile(cacheFile, moduleCode, 'utf-8');
+        } catch (writeErr) {
+          console.error(`Failed to write cache for ${url}:`, writeErr);
+        }
       }
+      
+      // 创建子沙箱执行远程库代码
+      const exports = {};
+      const module = { exports };
+      const moduleSandbox = { module, exports, console, setTimeout, clearTimeout };
+      moduleSandbox.global = moduleSandbox; 
+      
+      vm.createContext(moduleSandbox);
+      const script = new vm.Script(moduleCode, { filename: url });
+      
+      script.runInContext(moduleSandbox, { timeout: 2000 }); 
+      
+      // 保存到内存缓存并返回
+      moduleMemoryCache[url] = moduleSandbox.module.exports;
+      return moduleMemoryCache[url];
     }
   };
 
   const context = vm.createContext(sandbox);
   
-  // 2. 将代码包裹在 async 闭包中，允许用户代码使用 await
   const wrappedCode = `
     (async () => {
       ${code}
@@ -57,8 +87,6 @@ async function execute() {
   `;
 
   const script = new vm.Script(wrappedCode, { filename: 'function.js' });
-  
-  // 因为外层是 async，这里返回的是一个 Promise
   const extractedPromise = script.runInContext(context, { timeout: 4500 });
   const extracted = await extractedPromise; 
 
@@ -66,7 +94,7 @@ async function execute() {
     throw new Error('No valid main function found');
   }
 
-  // 3. 执行测试用例
+  // --- 测试用例执行逻辑 ---
   if (taskType === 'test') {
     const testCases = extracted.testCases;
     if (!Array.isArray(testCases)) throw new Error('No valid testCases array found in code');
@@ -89,8 +117,7 @@ async function execute() {
     }
     parentPort.postMessage({ passed: errors.length === 0, errors });
   } 
-  
-  // 4. 处理常规执行
+  // --- 正常请求执行逻辑 ---
   else if (taskType === 'execute') {
     const result = await extracted.main(payload);
     parentPort.postMessage({ result });
