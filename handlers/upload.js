@@ -87,6 +87,12 @@ module.exports = async ({ params, body, set }) => {
     await fs.mkdir(saveDir, { recursive: true });
     const buffer = Buffer.from(await file.arrayBuffer());
     const code = buffer.toString('utf-8');
+    
+    // [START] debug
+    console.log('=== Received code ===');
+    console.log(code);
+    console.log('=== End of code ===');
+    // [END] debug
 
     // 提取并测试
     const { main, testCases } = await extractFromCode(code);
