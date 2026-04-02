@@ -7,11 +7,16 @@ function toWebRequest(req) {
   const protocol = req.socket.encrypted ? 'https' : 'http';
   const host = req.headers.host || 'localhost';
   const url = new URL(req.url, `${protocol}://${host}`);
-  return new Request(url, {
+  const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
+  const init = {
     method: req.method,
     headers: req.headers,
-    body: (req.method !== 'GET' && req.method !== 'HEAD') ? req : undefined,
-  });
+  };
+  if (hasBody) {
+    init.body = req;          // Node.js 的 IncomingMessage 是可读流
+    init.duplex = 'half';     // 必须设置，否则抛出 RequestInit: duplex option is required
+  }
+  return new Request(url, init);
 }
 
 /**
