@@ -5,7 +5,31 @@ const deepEqual = require('./deepEqual');
 
 async function execute() {
   const { code, taskType, payload } = workerData;
-  const context = vm.createContext({});
+  
+  // 1. 构建一个受控的沙箱环境
+  const sandbox = {
+    // 允许用户使用 console.log 调试代码 (输出到服务器控制台)
+    console: console,
+    
+    // 注入自定义的 require 函数
+    require: (moduleName) => {
+      // 安全黑名单：禁止加载高危 Node.js 核心模块
+      const FORBIDDEN_MODULES =['fs', 'child_process', 'worker_threads', 'os', 'vm', 'cluster'];
+      
+      if (FORBIDDEN_MODULES.includes(moduleName) || moduleName.startsWith('node:')) {
+        throw new Error(`Security Exception: Module '${moduleName}' is strictly forbidden.`);
+      }
+      
+      // 允许加载其他的内置模块 (如 'crypto') 和 第三方 NPM 模块 (如 'lodash')
+      try {
+        return require(moduleName);
+      } catch (err) {
+        throw new Error(`Cannot find module '${moduleName}'. Is it installed on the server?`);
+      }
+    }
+  };
+
+  const context = vm.createContext(sandbox);
   
   const wrappedCode = `
     (() => {
@@ -17,7 +41,7 @@ async function execute() {
     })();
   `;
 
-  // 内部超时仅作软限制，真正的硬限制由主线程 worker.terminate() 提供
+  // 内部超时软限制
   const script = new vm.Script(wrappedCode, { filename: 'function.js' });
   const extracted = script.runInContext(context, { timeout: 4500 });
 
