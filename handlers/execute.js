@@ -1,35 +1,25 @@
 // handlers/execute.js
-
 const fs = require('fs').promises;
 const path = require('path');
 const config = require('../config');
-const extractFromCode = require('../utils/extractFromCode');
+const { isValidFolder, isValidFilename } = require('../utils/validator');
+const runInWorker = require('../utils/runInWorker');
 
 module.exports = async ({ params, body, set }) => {
   const { folder, filename } = params;
 
-  if (folder.includes('/') || folder.includes('..') || filename.includes('/') || filename.includes('..')) {
-    set.status = 400;
-    return { error: 'Invalid folder or filename' };
-  }
-  if (!filename.endsWith('.js')) {
-    set.status = 400;
-    return { error: 'Only JavaScript files can be executed' };
+  if (!isValidFolder(folder) || !isValidFilename(filename)) {
+    set.status = 400; return { error: 'Invalid Request' };
   }
 
   const filePath = path.join(config.BASE_DIR, folder, filename);
 
   try {
-    await fs.access(filePath);
     const code = await fs.readFile(filePath, 'utf-8');
     
-    // 使用提取器获取函数
-    const { main } = await extractFromCode(code);
+    // 在子线程中执行请求，避免主线程卡死
+    const { result } = await runInWorker(code, 'execute', body);
     
-    // 执行函数
-    const result = await main(body);
-    
-    // 格式化输出
     if (typeof result === 'object' && result !== null) {
       return result;
     } else {
@@ -37,11 +27,8 @@ module.exports = async ({ params, body, set }) => {
     }
   } catch (err) {
     if (err.code === 'ENOENT') {
-      set.status = 404;
-      return { error: 'File not found' };
+      set.status = 404; return { error: 'Function not found' };
     }
-    console.error('Execution error:', err);
-    set.status = 500;
-    return { error: err.message };
+    set.status = 500; return { error: err.message };
   }
 };
