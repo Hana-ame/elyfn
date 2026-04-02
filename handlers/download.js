@@ -1,3 +1,5 @@
+// handlers/download.js
+
 const fs = require('fs').promises;
 const path = require('path');
 const config = require('../config');
@@ -19,17 +21,21 @@ module.exports = async ({ params, set }) => {
   try {
     await fs.access(filePath);
     const stat = await fs.stat(filePath);
+    
     if (!stat.isFile()) {
       set.status = 404;
       return { error: 'Not found' };
     }
-    const content = await fs.readFile(filePath);
-    return new Response(content, {
-      headers: {
-        'Content-Type': 'application/javascript',
-        'Content-Length': stat.size,
-      },
-    });
+    
+    // 以 UTF-8 文本读取代码文件
+    const content = await fs.readFile(filePath, 'utf-8');
+    
+    // 使用 Elysia 的 set 注入 headers，直接 return 字符串体
+    set.headers['Content-Type'] = 'application/javascript';
+    set.headers['Content-Disposition'] = `attachment; filename="${filename}"`;
+    
+    return content;
+    
   } catch (err) {
     if (err.code === 'ENOENT') {
       set.status = 404;

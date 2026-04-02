@@ -13,12 +13,10 @@ module.exports = async ({ params, body, set }) => {
 
   // 路径安全检查
   if (folder.includes('/') || folder.includes('..') || filename.includes('/') || filename.includes('..')) {
-    set.status = 400;
-    return { error: 'Invalid folder or filename' };
+    set.status = 400; return { error: 'Invalid folder or filename' };
   }
   if (!filename.endsWith('.js')) {
-    set.status = 400;
-    return { error: 'Only JavaScript files (.js) are allowed' };
+    set.status = 400; return { error: 'Only JavaScript files (.js) are allowed' };
   }
   if (!body.file) {
     set.status = 400;
@@ -39,14 +37,14 @@ module.exports = async ({ params, body, set }) => {
     const buffer = Buffer.from(await file.arrayBuffer());
     const code = buffer.toString('utf-8');
     
-    // [START] debug
-    console.log(`=== Processing upload for ${filename} ===`);
-    // [END] debug
-
-    // 1. 提取 main 函数和测试用例
     const { main, testCases } = await extractFromCode(code);
     
-    // 2. 运行测试用例验证代码
+    // 在这里单独校验上传时的 testCases
+    if (!Array.isArray(testCases)) {
+      set.status = 400;
+      return { error: 'No valid testCases array found in code' };
+    }
+
     const { passed, errors } = await runTests(main, testCases);
     
     if (!passed) {

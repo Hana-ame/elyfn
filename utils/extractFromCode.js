@@ -32,11 +32,9 @@ async function extractFromCode(code) {
   const main = extracted.main;
   const testCases = extracted.testCases;
   
+  // 只校验 main 函数是否存在，因为无论上传还是执行都需要 main
   if (typeof main !== 'function') {
     throw new Error('No valid main function found');
-  }
-  if (!Array.isArray(testCases)) {
-    throw new Error('No valid testCases array found');
   }
   
   return { main, testCases };
