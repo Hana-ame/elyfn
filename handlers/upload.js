@@ -22,16 +22,19 @@ function deepEqual(a, b) {
  * 从代码中提取 main 函数和 testCases
  */
 async function extractFromCode(code) {
-  const sandbox = { main: null, testCases: null };
+  // 创建一个新的 VM 上下文，但允许访问当前全局对象的副本
+  const context = { main: null, testCases: null };
   const script = new vm.Script(code, { filename: 'uploaded.js' });
-  script.runInNewContext(sandbox, { timeout: config.EXECUTION_TIMEOUT_MS });
-  if (typeof sandbox.main !== 'function') {
+  // 将代码执行在 context 中，并让 context 作为全局对象
+  script.runInNewContext(context, { timeout: config.EXECUTION_TIMEOUT_MS });
+  // 现在 context 中就有了 main 和 testCases
+  if (typeof context.main !== 'function') {
     throw new Error('No valid main function found');
   }
-  if (!Array.isArray(sandbox.testCases)) {
+  if (!Array.isArray(context.testCases)) {
     throw new Error('No valid testCases array found');
   }
-  return { main: sandbox.main, testCases: sandbox.testCases };
+  return { main: context.main, testCases: context.testCases };
 }
 
 /**
