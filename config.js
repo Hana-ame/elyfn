@@ -1,3 +1,5 @@
+// config.js
+
 module.exports = {
   PORT: 3000,
   HOST: '0.0.0.0',           // 监听所有接口
