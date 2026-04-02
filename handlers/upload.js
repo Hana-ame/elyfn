@@ -18,24 +18,34 @@ function deepEqual(a, b) {
   return true;
 }
 
+
 /**
- * 从代码中提取 main 函数和 testCases
+ * 从代码字符串中提取 main 函数和 testCases 数组
+ * @param {string} code - JavaScript 代码
+ * @returns {Promise<{ main: Function, testCases: Array }>}
  */
 async function extractFromCode(code) {
-  // 创建一个新的 VM 上下文，但允许访问当前全局对象的副本
-  const context = { main: null, testCases: null };
+  // 创建一个新的 V8 上下文，初始为空
+  const context = vm.createContext({});
+  
+  // 将代码运行在该上下文中，超时 30 秒
   const script = new vm.Script(code, { filename: 'uploaded.js' });
-  // 将代码执行在 context 中，并让 context 作为全局对象
-  script.runInNewContext(context, { timeout: config.EXECUTION_TIMEOUT_MS });
-  // 现在 context 中就有了 main 和 testCases
-  if (typeof context.main !== 'function') {
+  script.runInContext(context, { timeout: config.EXECUTION_TIMEOUT_MS });
+  
+  // 从上下文中提取变量
+  const main = context.main;
+  const testCases = context.testCases;
+  
+  if (typeof main !== 'function') {
     throw new Error('No valid main function found');
   }
-  if (!Array.isArray(context.testCases)) {
+  if (!Array.isArray(testCases)) {
     throw new Error('No valid testCases array found');
   }
-  return { main: context.main, testCases: context.testCases };
+  
+  return { main, testCases };
 }
+
 
 /**
  * 运行测试用例
