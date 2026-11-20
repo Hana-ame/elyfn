@@ -5,6 +5,32 @@ const path = require('path');
 const ROOT_DIR = __dirname;
 
 /**
+ * 解析 .env 中 `=` 右侧的值：
+ * - 支持单/双引号包裹（引号内的 # 与空格原样保留，双引号内支持 \" 与 \\ 转义）；
+ * - 未加引号时剥离行内注释，但要求 # 前有空白：`8   # 注释` → `8`，
+ *   而 `abc#123` 视为值的一部分（避免密码里的 # 被误吃）；
+ * - 引号未闭合时退回未加引号的处理方式，不静默吞掉整行。
+ */
+function parseEnvValue(raw) {
+  const val = raw.trim();
+  const quote = val[0];
+  if (quote === '"' || quote === "'") {
+    let end = -1;
+    for (let i = 1; i < val.length; i++) {
+      if (val[i] === '\\' && quote === '"') { i++; continue; }
+      if (val[i] === quote) { end = i; break; }
+    }
+    if (end > 0) {
+      const inner = val.slice(1, end);
+      // 与扫描时保持一致：双引号内的 \" 与 \\ 是转义写法，取值时还原；其它反斜杠原样保留
+      return quote === '"' ? inner.replace(/\\(["\\])/g, '$1') : inner;
+    }
+  }
+  const hashIdx = val.search(/(^|\s)#/);
+  return hashIdx >= 0 ? val.slice(0, hashIdx).trim() : val;
+}
+
+/**
  * 零依赖加载项目根目录（__dirname）下的 .env 文件（不覆盖已有的系统/Docker 环境变量）
  * 从任意工作目录执行 `node /opt/elyfn/index.js` 都能正确找到 .env 与 functions 目录
  */
@@ -19,10 +45,7 @@ function loadDotEnv() {
       const eqIdx = line.indexOf('=');
       if (eqIdx <= 0) continue;
       const key = line.slice(0, eqIdx).trim();
-      let val = line.slice(eqIdx + 1).trim();
-      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-        val = val.slice(1, -1);
-      }
+      const val = parseEnvValue(line.slice(eqIdx + 1));
       if (process.env[key] === undefined) {
         process.env[key] = val;
       }

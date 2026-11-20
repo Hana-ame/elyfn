@@ -127,3 +127,6 @@ curl -X DELETE -H "Authorization: Bearer your-strong-secret" http://127.0.0.1:30
 | `ELYFN_TIMEOUT_MS` | `5000` | 单次执行超时时间（毫秒） |
 | `ELYFN_MAX_FILE_SIZE` | `2097152` (2MB) | 上传文件大小上限（字节） |
 | `ELYFN_MAX_BODY_SIZE` | `1048576` (1MB) | POST 请求体大小上限（字节） |
+| `ELYFN_BASE_DIR` | `<项目根>/functions` | 函数存储目录（Docker 镜像内为 `/app/functions`，由 compose 指定） |
+
+取值语法：注释可单独成行，也可写在值后面（**要求 `#` 前有空格**，`MAX=8   # 说明` 会解析为 `8`）；未加空格的 `#` 视为值的一部分（`pass#123` 不会截断）；值中含空格或需要保留 `#` 时用引号包裹，双引号内支持 `\"` 与 `\\` 转义。系统环境变量与 Docker `env_file` 优先级高于 `.env`（不覆盖已有值）。
