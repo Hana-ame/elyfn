@@ -1,177 +1,129 @@
-# elyfn – 轻量级 JavaScript 函数托管服务
+# elyfn v2 – 轻量级自托管 JS/TS 函数托管服务
 
-**elyfn** 是一个极简的、自包含的服务器，让你可以通过 HTTP 上传、测试和执行 JavaScript 函数。每个函数独立存放在一个 `.js` 文件中，必须自带测试用例，上传前会自动验证。适用于教学、原型开发或作为轻量级 FaaS（函数即服务）平台。
+重构后的 **elyfn** 面向「**开发者独占上传与调试权限、公网用户仅调用执行接口**」的自托管场景，移除了冗余的 `vm` 沙箱与手写远程模块缓存，新增读写权限分离、Worker 并发/内存硬上限、4 级自动降级 TypeScript 编译、零停机原子热更新，并完整支持 **Docker**、**常规 Linux/macOS/Windows** 与 **Android Termux** 三种部署方式。
 
----
+## 核心特性
 
-## ✨ 特性
+- **读写权限分离**：`ELYFN_ADMIN_KEY` 保护上传、删除、列表与源码下载；`ELYFN_EXEC_KEY` 独立控制 `POST` 执行接口（留空允许公开调用，`ADMIN_KEY` 通用）。
+- **并发与资源保护**：内置 Worker 最大并发限制（默认 `8`，超限返回 `429`）、单 Worker 老生代内存上限（默认 `64MB`）、超时强杀（默认 `5000ms`，返回 `504`）和请求体大小拦截（超限返回 `413`）。
+- **免重启原子热更新**：上传时先写入函数同目录 `.tmp-*` 临时文件（不依赖 `/tmp`），Worker 跑完内置 `testCases` 通过后通过 `fs.rename` 原子覆盖生效。
+- **4 级 TS 编译降级链**：上传 `.ts` 时按 `esbuild (npm)` → `系统 esbuild CLI (Termux pkg)` → `esbuild-wasm` → `Node.js 内置 stripTypeScriptTypes` 依次自动降级，`esbuild` 设为可选依赖，不卡死安装。
+- **内置 `.env` 读取**：`config.js` 零依赖自动读取同目录 `.env`，任意平台直接执行 `npm start` 或 `node index.js` 即可，不依赖 shell 脚本。
 
-- **一个文件一个函数** – 简单、清晰。
-- **测试驱动上传** – 上传的 JS 文件会在沙箱中执行，只有所有自带测试用例通过才会保存。
-- **HTTP API** – 通过 `PUT`（上传）、`GET`（下载）和 `POST`（执行）操作函数。
-- **隔离执行** – 使用 Node.js 的 `vm` 模块，并带有超时保护。
-- **随处运行** – 支持 Node.js ≥18（包括 Termux、树莓派等）。
-- **依赖极少** – 仅需 Node.js 核心模块 + Elysia（一个小巧的 Web 框架）。
-
----
-
-## 📦 安装
+## 方式一：Docker 部署（推荐，带容器级隔离）
 
 ```bash
-git clone https://github.com/yourusername/elyfn.git
-cd elyfn
-npm install elysia
+cp .env.example .env
+# 编辑 .env，将 ELYFN_ADMIN_KEY 改为强密码
+mkdir -p functions
+docker compose up -d --build
 ```
 
----
+- 默认开启**非 root 运行、只读根文件系统、禁用 Linux Capabilities、512MB 内存与 1 核 CPU 上限**，函数目录挂载在 `./functions`。
+- 默认仅映射 `127.0.0.1:3000:3000` 供本机 Nginx/Caddy 反代；如需直连可改为 `"3000:3000"`。
 
-## 🚀 使用
+## 方式二：非 Docker 部署（Linux / macOS / Windows，Node.js ≥18）
 
-### 1. 启动服务
+### 直接启动
 
 ```bash
-node index.js
+cp .env.example .env
+# 编辑 .env，设置 ELYFN_ADMIN_KEY
+npm install --omit=dev
+npm start
 ```
 
-默认监听 `http://0.0.0.0:3000`，可在 `config.js` 中修改端口和主机。
+### Linux 服务器后台常驻（systemd）
 
-### 2. 编写函数文件
-
-创建一个 `.js` 文件（例如 `square.js`），文件中必须包含：
-
-- `testCases` 数组：每个元素包含 `input` 和 `expected` 字段。
-- `main` 函数：接收一个对象，返回一个对象。
-
-**示例 `square.js`**：
-```javascript
-const testCases = [
-  { input: { x: 2 }, expected: { result: 4 } },
-  { input: { x: 3 }, expected: { result: 9 } }
-];
-
-function main(obj) {
-  return { result: obj.x * obj.x };
-}
-```
-
-### 3. 上传函数
-
-```bash
-curl -X PUT -F "file=@square.js" http://localhost:3000/functions/square.js
-```
-
-如果所有测试用例通过，文件会被保存到 `./functions/square.js`。
-
-### 4. 执行函数
-
-```bash
-curl -X POST -H "Content-Type: application/json" -d '{"x":5}' http://localhost:3000/functions/square.js
-```
-
-响应：`{"result":25}`
-
-### 5. 下载源码
-
-```bash
-curl -O http://localhost:3000/functions/square.js
-```
-
----
-
-## 📡 API 端点
-
-| 方法 | 端点                       | 描述                       |
-|------|----------------------------|----------------------------|
-| PUT  | `/:folder/:filename.js`    | 上传函数文件（必须通过测试） |
-| GET  | `/:folder/:filename.js`    | 下载函数源码               |
-| POST | `/:folder/:filename.js`    | 执行函数（请求体作为参数）  |
-
-- `folder` 必须是单层目录（不能包含 `/` 或 `..`）。
-- `filename` 必须以 `.js` 结尾。
-- `PUT` 时，文件必须包含 `testCases` 数组和 `main` 函数。
-- `POST` 时，请求体（JSON）会作为 `main` 的唯一参数传入。
-
----
-
-## ⚙️ 配置
-
-编辑 `config.js` 调整以下选项：
-
-```javascript
-module.exports = {
-  PORT: 3000,                     // 监听端口
-  HOST: '0.0.0.0',               // 监听所有网络接口
-  MAX_FILE_SIZE: 10 * 1024 * 1024, // 最大文件大小 10MB
-  EXECUTION_TIMEOUT_MS: 30000,    // 执行超时 30 秒
-  BASE_DIR: process.cwd(),        // 函数文件存储根目录
-};
-```
-
----
-
-## 🛡️ 安全说明
-
-- 所有用户代码在 Node.js `vm` 沙箱中执行，**无法访问文件系统或网络**。
-- 路径经过净化，防止目录遍历（例如 `../`）。
-- 上传文件大小受限。
-- 本项目未针对高流量生产环境做额外加固（如限流、认证等），如需生产使用请自行添加。
-
----
-
-## 📁 项目结构
-
-```
-elyfn/
-├── index.js            # 入口
-├── server.js           # 启动 HTTP 服务器
-├── app.js              # 路由定义
-├── adapter.js          # Node.js ↔ Web 标准请求适配
-├── config.js           # 配置
-├── handlers/
-│   ├── upload.js       # PUT 上传 + 测试验证
-│   ├── download.js     # GET 下载
-│   └── execute.js      # POST 执行
-├── utils/
-│   ├── deepEqual.js    # 深度比较
-│   ├── extractFromCode.js # 提取 main 和 testCases
-│   └── runTests.js     # 运行测试用例
-└── functions/          # 上传的函数存放目录（自动创建）
-```
-
----
-
-## 🧪 完整示例
-
-1. **本地创建 `double.js`**：
-   ```javascript
-   const testCases = [
-     { input: { n: 2 }, expected: { value: 4 } },
-     { input: { n: 3 }, expected: { value: 6 } } // 这个用例会失败
-   ];
-   function main(obj) {
-     return { value: obj.n * 2 };
-   }
-   ```
-2. **上传**：
+1. 将项目部署到 `/opt/elyfn`，执行 `npm install --omit=dev` 并配置 `/opt/elyfn/.env`。
+2. 确保函数目录归属运行用户：`sudo mkdir -p /opt/elyfn/functions && sudo chown -R www-data:www-data /opt/elyfn/functions`。
+3. 注册并启动服务：
    ```bash
-   curl -X PUT -F "file=@double.js" http://localhost:3000/math/double.js
+   sudo cp deploy/elyfn.service /etc/systemd/system/elyfn.service
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now elyfn
+   sudo systemctl status elyfn
    ```
-   上传失败，因为第二个测试用例期望 6 但实际得到 4。
-3. **修正测试**（将期望值改为 6），再次上传 → 成功。
-4. **执行**：
+
+## 方式三：Android Termux 部署
+
+1. **安装基础环境**（建议从 F-Droid 或 GitHub Releases 安装 Termux）：
    ```bash
-   curl -X POST -H "Content-Type: application/json" -d '{"n":10}' http://localhost:3000/math/double.js
+   pkg update && pkg upgrade
+   pkg install nodejs-lts esbuild tmux
    ```
-   返回 `{"value":20}`。
+   > `esbuild` 在 `package.json` 中为可选依赖；即使 npm 版在部分 ARM 机型跳过安装，程序也会自动调用通过 `pkg install esbuild` 安装的系统二进制（或回退到 `esbuild-wasm` / Node 原生类型擦除）。
+2. **安装依赖并配置低内存参数**：
+   ```bash
+   cp .env.example .env
+   nano .env
+   ```
+   建议在 Termux 的 `.env` 中将并发与单 Worker 内存调低，避免触发 Android 后台杀进程：
+   ```ini
+   ELYFN_ADMIN_KEY=your-strong-secret
+   ELYFN_MAX_CONCURRENCY=2
+   ELYFN_MAX_WORKER_MEM_MB=32
+   ```
+   然后安装依赖：
+   ```bash
+   npm install --omit=dev
+   ```
+3. **防休眠并后台启动**（不依赖 `./run.sh` 的 shebang）：
+   ```bash
+   termux-wake-lock
+   tmux new -s elyfn
+   npm start
+   # 按 Ctrl+B 再按 D 切回后台
+   ```
 
----
+## 使用示例
 
-## 📄 许可证
+### 1. 上传函数（需 `ADMIN_KEY`，支持 `.js` 与 `.ts`）
 
-MIT
+```bash
+curl -X PUT \
+  -H "Authorization: Bearer your-strong-secret" \
+  -F "file=@examples/square.js" \
+  http://127.0.0.1:3000/math/square.js
 
----
+curl -X PUT \
+  -H "Authorization: Bearer your-strong-secret" \
+  -F "file=@examples/greet.ts" \
+  http://127.0.0.1:3000/demo/greet.ts
+```
 
-## 🙌 贡献
+### 2. 调用函数（公开或携带 `EXEC_KEY`）
 
-欢迎提交 Issue 和 Pull Request。请保持项目简单轻量。
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"x": 5}' \
+  http://127.0.0.1:3000/math/square
+
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alice"}' \
+  http://127.0.0.1:3000/demo/greet
+```
+
+### 3. 管理与下载（需 `ADMIN_KEY`）
+
+```bash
+curl -H "Authorization: Bearer your-strong-secret" http://127.0.0.1:3000/manage/list
+curl -H "Authorization: Bearer your-strong-secret" -O http://127.0.0.1:3000/demo/greet.ts
+curl -X DELETE -H "Authorization: Bearer your-strong-secret" http://127.0.0.1:3000/manage/demo/greet
+```
+
+## 环境变量配置（`.env`）
+
+| 变量名 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `ELYFN_PORT` | `3000` | 监听端口 |
+| `ELYFN_HOST` | `0.0.0.0` | 监听地址 |
+| `ELYFN_ADMIN_KEY` | `change-me-admin-secret` | 写/管理权限密钥（生产必填） |
+| `ELYFN_EXEC_KEY` | 空（公开调用） | 执行接口密钥 |
+| `ELYFN_MAX_CONCURRENCY` | `8` | Worker 最大并发数（超限返回 429） |
+| `ELYFN_MAX_WORKER_MEM_MB` | `64` | 单个 Worker 老生代内存上限（MB） |
+| `ELYFN_TIMEOUT_MS` | `5000` | 单次执行超时时间（毫秒） |
+| `ELYFN_MAX_FILE_SIZE` | `2097152` (2MB) | 上传文件大小上限（字节） |
+| `ELYFN_MAX_BODY_SIZE` | `1048576` (1MB) | POST 请求体大小上限（字节） |

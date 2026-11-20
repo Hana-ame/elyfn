@@ -1,0 +1,19 @@
+{
+  "name": "elyfn",
+  "version": "2.1.0",
+  "description": "Lightweight self-hosted JS/TS FaaS server with admin/exec auth, concurrency limits, atomic hot-reload, and Termux support",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "elysia": "^1.1.0"
+  },
+  "optionalDependencies": {
+    "esbuild": "^0.24.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,30 @@
+# 非 Docker Linux 服务器 systemd 托管配置
+# 安装方式：
+#   1. 将项目放到 /opt/elyfn，完成 npm install --omit=dev 并配置好 /opt/elyfn/.env
+#   2. sudo cp deploy/elyfn.service /etc/systemd/system/elyfn.service
+#   3. sudo systemctl daemon-reload && sudo systemctl enable --now elyfn
+
+[Unit]
+Description=elyfn Lightweight JS/TS FaaS Server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/elyfn
+EnvironmentFile=/opt/elyfn/.env
+ExecStart=/usr/bin/node /opt/elyfn/index.js
+Restart=on-failure
+RestartSec=3
+
+# 进程级资源与权限加固
+MemoryMax=512M
+CPUQuota=100%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/elyfn/functions
+
+[Install]
+WantedBy=multi-user.target

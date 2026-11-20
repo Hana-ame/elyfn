@@ -1,6 +1,5 @@
 // adapter.js
-
-const { createServer } = require('http');
+const config = require('./config');
 
 /**
  * 将 Node.js 请求转换为 Web 标准 Request
@@ -15,8 +14,8 @@ function toWebRequest(req) {
     headers: req.headers,
   };
   if (hasBody) {
-    init.body = req;          // Node.js 的 IncomingMessage 是可读流
-    init.duplex = 'half';     // 必须设置，否则抛出 RequestInit: duplex option is required
+    init.body = req;
+    init.duplex = 'half';
   }
   return new Request(url, init);
 }
@@ -34,18 +33,28 @@ async function writeNodeResponse(webRes, nodeRes) {
 }
 
 /**
- * 创建适配器：将 Elysia 应用包装为 Node.js 请求处理函数
+ * 创建适配器：将 Elysia 应用包装为 Node.js 请求处理函数，并拦截超大请求体
  */
 function createNodeAdapter(app) {
   return async (nodeReq, nodeRes) => {
     try {
+      const contentLength = Number(nodeReq.headers['content-length'] || 0);
+      const limit = nodeReq.method === 'PUT' ? config.MAX_FILE_SIZE : config.MAX_BODY_SIZE;
+      if (contentLength > limit) {
+        nodeRes.statusCode = 413;
+        nodeRes.setHeader('Content-Type', 'application/json');
+        nodeRes.end(JSON.stringify({ error: `Payload too large (limit: ${limit} bytes)` }));
+        return;
+      }
+
       const webReq = toWebRequest(nodeReq);
       const webRes = await app.fetch(webReq);
       await writeNodeResponse(webRes, nodeRes);
     } catch (err) {
       console.error('Unhandled error:', err);
       nodeRes.statusCode = 500;
-      nodeRes.end('Internal Server Error');
+      nodeRes.setHeader('Content-Type', 'application/json');
+      nodeRes.end(JSON.stringify({ error: 'Internal Server Error' }));
     }
   };
 }

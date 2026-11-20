@@ -2,21 +2,25 @@
 const fs = require('fs').promises;
 const path = require('path');
 const config = require('../config');
-const { isValidFolder, isValidFilename } = require('../utils/validator');
+const { isValidFolder, isValidFuncName, getBaseName } = require('../utils/validator');
 
 async function listFunctions({ set }) {
   try {
     await fs.mkdir(config.BASE_DIR, { recursive: true });
-    const folders = await fs.readdir(config.BASE_DIR, { withFileTypes: true });
+    const entries = await fs.readdir(config.BASE_DIR, { withFileTypes: true });
     const functions = {};
-    
-    for (const dirent of folders) {
-      if (dirent.isDirectory()) {
-        const folderPath = path.join(config.BASE_DIR, dirent.name);
-        const files = await fs.readdir(folderPath);
-        functions[dirent.name] = files.filter(f => f.endsWith('.js'));
+
+    for (const dirent of entries) {
+      if (!dirent.isDirectory()) continue;
+      const folderPath = path.join(config.BASE_DIR, dirent.name);
+      const files = await fs.readdir(folderPath);
+      // 忽略原子写入期间的 .tmp-* 临时文件
+      const visible = files.filter((f) => !f.startsWith('.tmp-') && f.endsWith('.js'));
+      if (visible.length > 0) {
+        functions[dirent.name] = visible;
       }
     }
+
     return { success: true, functions };
   } catch (err) {
     set.status = 500;
@@ -26,27 +30,32 @@ async function listFunctions({ set }) {
 
 async function deleteFunction({ params, set }) {
   const { folder, filename } = params;
-  if (!isValidFolder(folder) || !isValidFilename(filename)) {
-    set.status = 400; return { error: 'Invalid identifier' };
+  if (!isValidFolder(folder) || !isValidFuncName(filename)) {
+    set.status = 400;
+    return { error: 'Invalid identifier' };
   }
 
+  const baseName = getBaseName(filename);
+  const targetDir = path.join(config.BASE_DIR, folder);
+  const jsPath = path.join(targetDir, `${baseName}.js`);
+  const tsPath = path.join(targetDir, `${baseName}.ts`);
+
   try {
-    const targetDir = path.join(config.BASE_DIR, folder);
-    const targetPath = path.join(targetDir, filename);
-    
-    await fs.unlink(targetPath); // 删除文件
-    
-    // 如果文件夹空了，顺便删除文件夹
+    await fs.unlink(jsPath);
+    await fs.unlink(tsPath).catch(() => {});
+
     const remainingFiles = await fs.readdir(targetDir);
     if (remainingFiles.length === 0) {
       await fs.rmdir(targetDir);
     }
-    return { success: true, message: `Deleted ${folder}/${filename}` };
+    return { success: true, message: `Deleted ${folder}/${baseName}` };
   } catch (err) {
     if (err.code === 'ENOENT') {
-      set.status = 404; return { error: 'Function not found' };
+      set.status = 404;
+      return { error: 'Function not found' };
     }
-    set.status = 500; return { error: 'Delete failed' };
+    set.status = 500;
+    return { error: 'Delete failed' };
   }
 }
 

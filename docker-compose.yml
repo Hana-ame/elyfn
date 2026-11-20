@@ -1,0 +1,26 @@
+services:
+  elyfn:
+    build: .
+    container_name: elyfn
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - ELYFN_HOST=0.0.0.0
+      - ELYFN_PORT=3000
+      - ELYFN_BASE_DIR=/app/functions
+    ports:
+      # 默认仅监听本机，配合 Nginx/Caddy 反向代理；如需直连可改为 "3000:3000"
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./functions:/app/functions
+    # 容器安全与资源隔离
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
