@@ -19,10 +19,8 @@ const app = new Elysia()
     const method = request.method.toUpperCase();
     const token = getBearerToken(request);
 
-    // 健康检查接口放行
     if (method === 'GET' && pathname === '/') return;
 
-    // 执行接口（POST /:folder/:filename）：公开或校验 EXEC_KEY（ADMIN_KEY 通用）
     if (method === 'POST') {
       if (config.EXEC_KEY && token !== config.EXEC_KEY && token !== config.ADMIN_KEY) {
         set.status = 401;
@@ -31,23 +29,25 @@ const app = new Elysia()
       return;
     }
 
-    // 其余接口（PUT 上传、DELETE 删除、GET 列表/源码下载）统一要求 ADMIN_KEY
     if (config.ADMIN_KEY && token !== config.ADMIN_KEY) {
       set.status = 403;
       return { error: 'Forbidden: admin key required' };
     }
   })
 
-  // 2. 统一错误处理
+  // 2. 统一错误处理（5xx 屏蔽内部错误细节，防止信息外泄）
   .onError(({ code, error, set }) => {
     if (code === 'NOT_FOUND') {
       set.status = 404;
       return { error: 'Endpoint Not Found' };
     }
-    if (error && error.status) {
-      set.status = error.status;
+    const status = (error && error.status) || (typeof set.status === 'number' ? set.status : 500);
+    set.status = status;
+    if (status >= 500 && status !== 504) {
+      console.error('Server error:', error);
+      return { error: 'Internal Server Error' };
     }
-    return { error: error ? error.message : 'Internal Server Error' };
+    return { error: error ? error.message : 'Request Error' };
   })
 
   // 3. 运维管理接口（仅 ADMIN_KEY）

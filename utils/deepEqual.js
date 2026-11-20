@@ -1,25 +1,5 @@
 // utils/deepEqual.js
+const { isDeepStrictEqual } = require('util');
 
-/**
- * 深度相等比较（支持普通对象与数组）
- */
-function deepEqual(a, b) {
-  if (a === b) return true;
-  if (typeof a !== 'object' || a === null || typeof b !== 'object' || b === null) return false;
-  if (Array.isArray(a) !== Array.isArray(b)) return false;
-
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-
-  if (keysA.length !== keysB.length) return false;
-
-  for (const key of keysA) {
-    if (!Object.prototype.hasOwnProperty.call(b, key) || !deepEqual(a[key], b[key])) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-module.exports = deepEqual;
+// 直接使用 Node.js 内置深度严格比较：正确处理 Date、RegExp、Map、Set、NaN 与循环引用
+module.exports = isDeepStrictEqual;

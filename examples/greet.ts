@@ -1,5 +1,6 @@
 // examples/greet.ts
-// TypeScript 函数示例：上传时由 esbuild 自动编译为 CJS 并执行 testCases
+// TypeScript 函数示例：上传时由 esbuild / esbuild-cli / esbuild-wasm 编译为 CJS 并执行 testCases
+// 注意：若仅依赖第 4 级 Node 原生 stripTypeScriptTypes 兜底，请改用 `module.exports = { main, testCases }`
 
 interface GreetInput {
   name?: string;

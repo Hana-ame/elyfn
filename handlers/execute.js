@@ -29,7 +29,12 @@ module.exports = async ({ params, body, set }) => {
       set.status = 404;
       return { error: 'Function not found' };
     }
-    set.status = err.status || 500;
+    const status = err.status || 500;
+    set.status = status;
+    if (status >= 500 && status !== 504) {
+      console.error(`Execute error (${folder}/${baseName}):`, err);
+      return { error: 'Internal Server Error' };
+    }
     return { error: err.message };
   }
 };

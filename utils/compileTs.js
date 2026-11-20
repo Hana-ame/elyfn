@@ -14,6 +14,9 @@ function runSystemEsbuildCli(tsCode) {
     let stderr = '';
     let settled = false;
 
+    // 防止子进程提前退出导致 stdin 写入触发未捕获 EPIPE 崩溃主进程
+    child.stdin.on('error', () => {});
+
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
@@ -51,7 +54,7 @@ function runSystemEsbuildCli(tsCode) {
  * 1. npm 原生 esbuild
  * 2. 系统 esbuild CLI（Termux 可通过 `pkg install esbuild` 安装）
  * 3. 纯 WASM 版 esbuild-wasm（零原生二进制依赖）
- * 4. Node.js 内置 module.stripTypeScriptTypes（Node 22.18+/24+ 零依赖兜底）
+ * 4. Node.js 内置 module.stripTypeScriptTypes（仅支持可擦除类型 + CommonJS 导出）
  */
 async function compileTs(rawCode, filename = 'function.ts') {
   // 1. 优先尝试 npm 安装的 esbuild
@@ -65,10 +68,7 @@ async function compileTs(rawCode, filename = 'function.ts') {
     });
     return { code: transformed.code, compiler: 'esbuild' };
   } catch (err) {
-    if (err.code !== 'MODULE_NOT_FOUND' && !/Cannot find module/i.test(err.message)) {
-      // 如果是 TS 语法错误，直接抛出给开发者而不是误降级
-      if (err.errors && Array.isArray(err.errors)) throw err;
-    }
+    if (err.errors && Array.isArray(err.errors)) throw err;
   }
 
   // 2. 尝试系统 PATH 中的 esbuild 二进制（如 Termux 的 `pkg install esbuild`）
@@ -76,9 +76,7 @@ async function compileTs(rawCode, filename = 'function.ts') {
     const code = await runSystemEsbuildCli(rawCode);
     return { code, compiler: 'esbuild-cli' };
   } catch (err) {
-    if (err.code !== 'ENOENT') {
-      throw err;
-    }
+    if (err.code !== 'ENOENT') throw err;
   }
 
   // 3. 尝试纯 WebAssembly 版 esbuild-wasm
@@ -92,15 +90,18 @@ async function compileTs(rawCode, filename = 'function.ts') {
     });
     return { code: transformed.code, compiler: 'esbuild-wasm' };
   } catch (err) {
-    if (err.code !== 'MODULE_NOT_FOUND' && !/Cannot find module/i.test(err.message)) {
-      if (err.errors && Array.isArray(err.errors)) throw err;
-    }
+    if (err.errors && Array.isArray(err.errors)) throw err;
   }
 
-  // 4. 兜底：Node.js 22.18+/24+ 原生类型擦除（仅支持可擦除语法与 CJS 导出）
+  // 4. 兜底：Node.js 22.18+/24+ 原生类型擦除（不会把 ESM export 转成 CJS）
   if (typeof nodeModule.stripTypeScriptTypes === 'function') {
-    const code = nodeModule.stripTypeScriptTypes(rawCode);
-    return { code, compiler: 'node-strip-types' };
+    const stripped = nodeModule.stripTypeScriptTypes(rawCode);
+    if (/^\s*(export|import)\s+/m.test(stripped)) {
+      throw new Error(
+        'Node.js stripTypeScriptTypes fallback does not convert ESM import/export to CJS. Use module.exports = { main, testCases }, or install esbuild / esbuild-wasm.'
+      );
+    }
+    return { code: stripped, compiler: 'node-strip-types' };
   }
 
   throw new Error(

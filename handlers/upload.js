@@ -6,6 +6,7 @@ const config = require('../config');
 const { isValidFolder, isValidSourceFilename, getBaseName } = require('../utils/validator');
 const runInWorker = require('../utils/runInWorker');
 const compileTs = require('../utils/compileTs');
+const { withFunctionLock } = require('../utils/fnLock');
 
 module.exports = async ({ params, body, set }) => {
   const { folder, filename } = params;
@@ -28,59 +29,65 @@ module.exports = async ({ params, body, set }) => {
   const rawCode = buffer.toString('utf-8');
   const isTs = filename.endsWith('.ts');
   const baseName = getBaseName(filename);
-  const folderDir = path.join(config.BASE_DIR, folder);
-  const finalJsPath = path.join(folderDir, `${baseName}.js`);
-  const finalTsPath = path.join(folderDir, `${baseName}.ts`);
+  const lockKey = `${folder}/${baseName}`;
 
-  const tmpSuffix = crypto.randomBytes(6).toString('hex');
-  const tmpJsPath = path.join(folderDir, `.tmp-${baseName}-${tmpSuffix}.js`);
-  const tmpTsPath = path.join(folderDir, `.tmp-${baseName}-${tmpSuffix}.ts`);
+  return withFunctionLock(lockKey, async () => {
+    const folderDir = path.join(config.BASE_DIR, folder);
+    const finalJsPath = path.join(folderDir, `${baseName}.js`);
+    const finalTsPath = path.join(folderDir, `${baseName}.ts`);
 
-  try {
-    await fs.mkdir(folderDir, { recursive: true });
+    const tmpSuffix = crypto.randomBytes(6).toString('hex');
+    const tmpJsPath = path.join(folderDir, `.tmp-${baseName}-${tmpSuffix}.js`);
+    const tmpTsPath = path.join(folderDir, `.tmp-${baseName}-${tmpSuffix}.ts`);
 
-    // 1. 如果是 .ts 文件，通过 4 级降级编译链在上传期编译为可执行 JS
-    let runnableJs = rawCode;
-    let compiler = null;
-    if (isTs) {
-      const compiled = await compileTs(rawCode, filename);
-      runnableJs = compiled.code;
-      compiler = compiled.compiler;
-    }
+    try {
+      await fs.mkdir(folderDir, { recursive: true });
 
-    // 2. 先写入同目录临时文件（不依赖 /tmp，兼容 Termux）
-    await fs.writeFile(tmpJsPath, runnableJs, 'utf-8');
+      // 1. 如果是 .ts 文件，通过 4 级降级编译链在上传期编译为可执行 JS
+      let runnableJs = rawCode;
+      let compiler = null;
+      if (isTs) {
+        const compiled = await compileTs(rawCode, filename);
+        runnableJs = compiled.code;
+        compiler = compiled.compiler;
+      }
 
-    // 3. 在独立 Worker 中运行自带的 testCases
-    const { passed, errors } = await runInWorker(tmpJsPath, 'test');
-    if (!passed) {
+      // 2. 先将所有待落盘文件写到同目录临时文件，保证后续切换一致
+      await fs.writeFile(tmpJsPath, runnableJs, 'utf-8');
+      if (isTs) {
+        await fs.writeFile(tmpTsPath, rawCode, 'utf-8');
+      }
+
+      // 3. 在独立管理测试并发池中运行自带的 testCases
+      const { passed, errors } = await runInWorker(tmpJsPath, 'test');
+      if (!passed) {
+        await fs.unlink(tmpJsPath).catch(() => {});
+        await fs.unlink(tmpTsPath).catch(() => {});
+        set.status = 400;
+        return { error: 'Test cases failed', details: errors };
+      }
+
+      // 4. 全部准备就绪且测试通过后再原子 rename 生效
+      if (isTs) {
+        await fs.rename(tmpTsPath, finalTsPath);
+      } else {
+        await fs.unlink(finalTsPath).catch(() => {});
+      }
+      await fs.rename(tmpJsPath, finalJsPath);
+
+      set.status = 201;
+      return {
+        success: true,
+        function: `${folder}/${baseName}`,
+        compiledFromTs: isTs,
+        compiler,
+        endpoint: `/${folder}/${baseName}.js`,
+      };
+    } catch (err) {
       await fs.unlink(tmpJsPath).catch(() => {});
-      set.status = 400;
-      return { error: 'Test cases failed', details: errors };
+      await fs.unlink(tmpTsPath).catch(() => {});
+      set.status = err.status || 400;
+      return { error: err.message };
     }
-
-    // 4. 测试通过后原子 rename 覆盖，实现零停机热更新
-    await fs.rename(tmpJsPath, finalJsPath);
-
-    if (isTs) {
-      await fs.writeFile(tmpTsPath, rawCode, 'utf-8');
-      await fs.rename(tmpTsPath, finalTsPath);
-    } else {
-      await fs.unlink(finalTsPath).catch(() => {});
-    }
-
-    set.status = 201;
-    return {
-      success: true,
-      function: `${folder}/${baseName}`,
-      compiledFromTs: isTs,
-      compiler,
-      endpoint: `/${folder}/${baseName}.js`,
-    };
-  } catch (err) {
-    await fs.unlink(tmpJsPath).catch(() => {});
-    await fs.unlink(tmpTsPath).catch(() => {});
-    set.status = err.status || 400;
-    return { error: err.message };
-  }
+  });
 };
