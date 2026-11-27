@@ -99,7 +99,7 @@ jobs:
 
           expect "catalog lists square" '"square"' "$(curl -sS http://127.0.0.1:3000/catalog)"
 
-          expect "execute square(6) = 36" '"square":36' "$(curl -sS -X POST \
+          expect "execute square(6) = 36" '"result":36' "$(curl -sS -X POST \
             -H "Content-Type: application/json" -d '{"x":6}' \
             http://127.0.0.1:3000/ci/square)"
 
