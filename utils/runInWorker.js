@@ -10,7 +10,7 @@ const pools = {
 };
 const runningWorkers = new Set();
 
-const SAFE_BASE_ENV_KEYS = new Set(['NODE_ENV', 'PATH', 'TZ', 'LANG', 'LC_ALL', 'LC_CTYPE']);
+const SAFE_BASE_ENV_KEYS = new Set(['NODE_ENV', 'PATH', 'TZ', 'LANG', 'LC_ALL', 'LC_CTYPE', 'AGY_PATH', 'PI_PATH', 'GH_CLI_PATH']);
 
 /**
  * 构造隔离的 Worker 环境变量：

@@ -8,6 +8,7 @@ const downloadHandler = require('./handlers/download');
 const executeHandler = require('./handlers/execute');
 const { getJobStatus, listJobStatuses } = require('./handlers/jobs');
 const { listFunctions, getCatalog, deleteFunction } = require('./handlers/manage');
+const { renderManageHtml } = require('./handlers/manageUi');
 
 function getBearerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -44,7 +45,12 @@ const app = new Elysia()
 
     const token = getBearerToken(request);
 
-    if (method === 'GET' && pathname === '/') return;
+    if (
+      method === 'GET' &&
+      (pathname === '/' || pathname === '/manage' || pathname === '/manage/' || pathname === '/admin' || pathname === '/admin/')
+    ) {
+      return;
+    }
 
     // 执行接口（POST）、只读函数目录（GET /catalog）与异步任务轮询（GET /jobs*）：由 EXEC_KEY 保护（未配置则公开；ADMIN_KEY 通用）
     if (
@@ -85,7 +91,23 @@ const app = new Elysia()
     return { error: error ? error.message : 'Request Error' };
   })
 
-  // 3. 运维管理接口（仅 ADMIN_KEY）
+  // 3. 运维管理接口（仅 ADMIN_KEY；静态外壳页面免密渲染，不含任何密钥与数据）
+  .get('/manage', ({ set }) => {
+    set.headers['Content-Type'] = 'text/html; charset=utf-8';
+    return renderManageHtml();
+  })
+  .get('/manage/', ({ set }) => {
+    set.headers['Content-Type'] = 'text/html; charset=utf-8';
+    return renderManageHtml();
+  })
+  .get('/admin', ({ set }) => {
+    set.headers['Content-Type'] = 'text/html; charset=utf-8';
+    return renderManageHtml();
+  })
+  .get('/admin/', ({ set }) => {
+    set.headers['Content-Type'] = 'text/html; charset=utf-8';
+    return renderManageHtml();
+  })
   .get('/manage/list', listFunctions)
   .delete('/manage/:folder/:filename', deleteFunction)
 

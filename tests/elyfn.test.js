@@ -462,3 +462,45 @@ test('async execution rejects with 429 when pool saturated and jobStore preserve
     await fs.rm(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('developer UI /manage/ and /admin/ serve HTML shell without exposing secrets, while /manage/list still enforces 403 and buildWorkerEnv keeps CLI paths', async () => {
+  const clean = runInWorker.buildWorkerEnv({
+    PATH: '/usr/bin',
+    AGY_PATH: '/usr/bin/agy',
+    PI_PATH: '/usr/local/bin/pi',
+    GH_CLI_PATH: '/usr/bin/gh',
+    GH_TOKEN: 'ghp_secret_must_strip',
+    ELYFN_ADMIN_KEY: 'admin_secret_must_strip',
+  });
+  assert.equal(clean.AGY_PATH, '/usr/bin/agy');
+  assert.equal(clean.PI_PATH, '/usr/local/bin/pi');
+  assert.equal(clean.GH_CLI_PATH, '/usr/bin/gh');
+  assert.equal(clean.GH_TOKEN, undefined);
+  assert.equal(clean.ELYFN_ADMIN_KEY, undefined);
+
+  const { createServer } = require('node:http');
+  const { createNodeAdapter } = require('../adapter');
+  const app = require('../app');
+  const prevAdminKey = config.ADMIN_KEY;
+  config.ADMIN_KEY = 'ui-admin-secret';
+  const srv = createServer(createNodeAdapter(app));
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const baseUrl = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    const manageRes = await fetch(`${baseUrl}/manage/`);
+    assert.equal(manageRes.status, 200);
+    assert.match(manageRes.headers.get('content-type') || '', /text\/html/);
+    const html = await manageRes.text();
+    assert.match(html, /elyfn/);
+    assert.equal(html.includes('ui-admin-secret'), false);
+
+    const adminRes = await fetch(`${baseUrl}/admin`);
+    assert.equal(adminRes.status, 200);
+
+    const listDenied = await fetch(`${baseUrl}/manage/list`);
+    assert.equal(listDenied.status, 403);
+  } finally {
+    await new Promise((r) => srv.close(r));
+    config.ADMIN_KEY = prevAdminKey;
+  }
+});

@@ -68,6 +68,11 @@ module.exports = {
   ROOT_DIR,
   PORT: Number(process.env.ELYFN_PORT) || 3000,
   HOST: process.env.ELYFN_HOST || '0.0.0.0',
+  SOCKET_PATH: (process.env.ELYFN_SOCKET || '').trim(),
+  SOCKET_MODE: Number.parseInt(process.env.ELYFN_SOCKET_MODE || '0660', 8) || 0o660,
+  AGY_PATH: (process.env.AGY_PATH || '').trim(),
+  PI_PATH: (process.env.PI_PATH || '').trim(),
+  GH_CLI_PATH: (process.env.GH_CLI_PATH || '').trim(),
 
   // 上传文件大小限制（默认 2MB）与执行请求体大小限制（默认 1MB）
   MAX_FILE_SIZE: Number(process.env.ELYFN_MAX_FILE_SIZE) || 2 * 1024 * 1024,

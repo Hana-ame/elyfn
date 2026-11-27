@@ -1,4 +1,6 @@
 // server.js
+const fs = require('fs');
+const path = require('path');
 const { createServer } = require('http');
 const { createNodeAdapter } = require('./adapter');
 const app = require('./app');
@@ -15,14 +17,34 @@ async function start() {
   // 启动前清理可能因上次异常退出残留的 .tmp-* 文件
   await cleanupTmpFiles(config.BASE_DIR);
 
-  server.listen(config.PORT, config.HOST, () => {
-    console.log(`elyfn server listening on http://${config.HOST}:${config.PORT}`);
+  const onListening = (endpointLabel) => {
+    console.log(`elyfn server listening on ${endpointLabel}`);
     console.log(
       `Concurrency: exec=${config.MAX_CONCURRENCY}, test=${config.MAX_TEST_CONCURRENCY}, mem=${config.MAX_WORKER_MEM_MB}MB, timeout=${config.EXECUTION_TIMEOUT_MS}ms`
     );
     if (config.ADMIN_KEY === 'change-me-admin-secret') {
       console.warn('[WARNING] Using default ADMIN_KEY! Set ELYFN_ADMIN_KEY before exposing this service.');
     }
+  };
+
+  if (config.SOCKET_PATH) {
+    fs.mkdirSync(path.dirname(config.SOCKET_PATH), { recursive: true });
+    if (fs.existsSync(config.SOCKET_PATH)) {
+      fs.unlinkSync(config.SOCKET_PATH);
+    }
+    server.listen(config.SOCKET_PATH, () => {
+      try {
+        fs.chmodSync(config.SOCKET_PATH, config.SOCKET_MODE);
+      } catch {
+        // ignore chmod failures on filesystems that disallow it
+      }
+      onListening(`unix://${config.SOCKET_PATH}`);
+    });
+    return;
+  }
+
+  server.listen(config.PORT, config.HOST, () => {
+    onListening(`http://${config.HOST}:${config.PORT}`);
   });
 }
 
@@ -36,6 +58,9 @@ async function shutdown(signal) {
     await waitForWorkers(config.EXECUTION_TIMEOUT_MS + 1000);
     await terminateAllWorkers();
     await cleanupTmpFiles(config.BASE_DIR);
+    if (config.SOCKET_PATH) {
+      try { fs.unlinkSync(config.SOCKET_PATH); } catch { /* ignore */ }
+    }
     console.log('elyfn server stopped cleanly.');
     process.exit(0);
   });
