@@ -204,12 +204,6 @@ test('adapter.createByteLimitStream aborts chunked payloads exceeding limit with
 });
 
 test('async execution returns 202 jobId and GET /jobs/:id reports running -> completed result', async () => {
-  const fs = require('node:fs').promises;
-  const os = require('node:os');
-  const path = require('node:path');
-  const config = require('../config');
-  const uploadHandler = require('../handlers/upload');
-  const executeHandler = require('../handlers/execute');
   const { getJobStatus, listJobStatuses } = require('../handlers/jobs');
 
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'elyfn-async-test-'));
@@ -224,9 +218,12 @@ test('async execution returns 202 jobId and GET /jobs/:id reports running -> com
       };
       exports.testCases = [{ input: { msg: 'hi' }, expected: { ok: true, echo: 'hi' } }];
     `;
-    const file = new File([code], 'slowecho.js', { type: 'application/javascript' });
     const setUpload = { status: 200 };
-    await uploadHandler({ params: { folder: 'asyncdemo', filename: 'slowecho.js' }, body: { file }, set: setUpload });
+    await uploadHandler({
+      params: { folder: 'asyncdemo', filename: 'slowecho.js' },
+      body: { file: makeFileBlob(code) },
+      set: setUpload,
+    });
     assert.equal(setUpload.status, 201);
 
     const setExec = { status: 200 };
