@@ -57,6 +57,27 @@ test('runInWorker.buildWorkerEnv isolates host secrets and allows ELYFN_FN_*', (
   assert.equal(clean.GITHUB_TOKEN, undefined);
   assert.equal(clean.GH_TOKEN, undefined);
   assert.equal(clean.ELYFN_ADMIN_KEY, undefined);
+
+  const winClean = runInWorker.buildWorkerEnv(
+    {
+      Path: 'C:\\Windows\\System32',
+      SystemRoot: 'C:\\Windows',
+      ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+      PATHEXT: '.COM;.EXE;.BAT;.CMD',
+      TEMP: 'C:\\Temp',
+      AppData: 'C:\\Users\\alice\\AppData\\Roaming',
+      GH_TOKEN: 'ghp_must_strip',
+    },
+    ['APPDATA'],
+    'win32'
+  );
+  assert.equal(winClean.Path, 'C:\\Windows\\System32');
+  assert.equal(winClean.SystemRoot, 'C:\\Windows');
+  assert.equal(winClean.ComSpec, 'C:\\Windows\\System32\\cmd.exe');
+  assert.equal(winClean.PATHEXT, '.COM;.EXE;.BAT;.CMD');
+  assert.equal(winClean.TEMP, 'C:\\Temp');
+  assert.equal(winClean.AppData, 'C:\\Users\\alice\\AppData\\Roaming');
+  assert.equal(winClean.GH_TOKEN, undefined);
   assert.equal(clean.BLUEPRINT_SAVE_KEY, undefined);
 });
 
@@ -492,7 +513,18 @@ test('developer UI /manage/ and /admin/ serve HTML shell without exposing secret
     assert.equal(manageRes.headers.get('content-type'), 'text/html; charset=utf-8');
     const html = await manageRes.text();
     assert.match(html, /elyfn/);
+    assert.match(html, /windowsVerbatimArguments/);
     assert.equal(html.includes('ui-admin-secret'), false);
+    const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+    assert.ok(scriptMatch, 'inline script block must exist');
+    new Function(scriptMatch[1]);
+    const { STARTER_TEMPLATES } = require('../handlers/manageUi');
+    for (const [k, tpl] of Object.entries(STARTER_TEMPLATES)) {
+      if (tpl.file.endsWith('.js')) {
+        new Function('require', 'exports', 'module', 'process', tpl.code);
+      }
+      assert.ok(k && tpl.folder && tpl.code);
+    }
 
     const adminRes = await fetch(`${baseUrl}/admin`);
     assert.equal(adminRes.status, 200);

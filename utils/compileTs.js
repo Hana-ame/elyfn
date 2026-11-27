@@ -5,9 +5,10 @@ const nodeModule = require('module');
 function runSystemEsbuildCli(tsCode) {
   return new Promise((resolve, reject) => {
     const bin = process.env.ESBUILD_BINARY_PATH || 'esbuild';
+    const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(bin);
     const child = spawn(bin, ['--loader=ts', '--format=cjs', '--target=node18'], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: false,
+      shell: useShell,
     });
 
     let stdout = '';

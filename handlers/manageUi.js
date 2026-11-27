@@ -1,5 +1,110 @@
 // handlers/manageUi.js — Self-contained Developer Console HTML for elyfn (/manage/, /admin/)
+const WIN_EXEC_CLI_FN = [
+  'async function execCli(bin, args, opts) {',
+  '  const isWin = process.platform === "win32";',
+  '  if (!isWin || /\\.(exe|com)$/i.test(bin)) {',
+  '    try { return await execFileAsync(bin, args, opts); }',
+  '    catch (e) { if (!isWin || (e.code !== "EINVAL" && e.code !== "ENOENT")) throw e; }',
+  '  }',
+  '  if ([bin, ...args].some((s) => /[\\r\\n\\0&|<>^%!]/.test(s))) {',
+  '    throw new Error("Unsafe shell metacharacters rejected for Windows .cmd wrapper");',
+  '  }',
+  '  const q = (s) => \'"\' + String(s).replace(/"/g, \'\\\\"\') + \'"\';',
+  '  const line = [q(bin), ...args.map(q)].join(" ");',
+  '  return execFileAsync("cmd.exe", ["/d", "/s", "/c", \'"\' + line + \'"\'], { ...opts, windowsVerbatimArguments: true });',
+  '}',
+].join('\n');
+
+const STARTER_TEMPLATES = {
+  js: {
+    folder: 'demo',
+    file: 'hello.js',
+    code: [
+      'exports.main = async (input) => ({ ok: true, greeting: "hello " + (input?.name || "atlas") });',
+      'exports.testCases = [{ input: { name: "ci" }, expected: { ok: true, greeting: "hello ci" } }];',
+    ].join('\n'),
+  },
+  ts: {
+    folder: 'demo',
+    file: 'typed.ts',
+    code: [
+      'interface GreetIn { name: string; }',
+      'export async function main(input: GreetIn): Promise<{ greeting: string }> {',
+      '  return { greeting: `hello ${input.name || "world"}` };',
+      '}',
+      'export const testCases = [{ input: { name: "ts" }, expected: { greeting: "hello ts" } }];',
+    ].join('\n'),
+  },
+  agy: {
+    folder: 'agents',
+    file: 'ask_agy.js',
+    code: [
+      'const { execFile } = require("node:child_process");',
+      'const { promisify } = require("node:util");',
+      'const execFileAsync = promisify(execFile);',
+      WIN_EXEC_CLI_FN,
+      'exports.main = async (input) => {',
+      '  const bin = process.env.AGY_PATH || "agy";',
+      '  const prompt = String(input?.prompt || "").trim();',
+      '  if (!prompt) return { ok: false, error: "缺少 input.prompt" };',
+      '  try {',
+      '    const { stdout, stderr } = await execCli(bin, ["-p", prompt, "--output-format", "json"], { timeout: 120000, maxBuffer: 4 * 1024 * 1024 });',
+      '    return { ok: true, output: stdout.trim(), stderr: stderr.trim() };',
+      '  } catch (err) {',
+      '    return { ok: false, error: err.message, hint: "请确认宿主已部署 elyfn、设置 AGY_PATH，并在 ELYFN_WORKER_ENV_ALLOW 允许 HOME (Linux/macOS) 或 USERPROFILE,APPDATA (Windows)" };',
+      '  }',
+      '};',
+      'exports.testCases = [{ input: { prompt: "" }, expected: { ok: false, error: "缺少 input.prompt" } }];',
+    ].join('\n'),
+  },
+  pi: {
+    folder: 'agents',
+    file: 'ask_pi.js',
+    code: [
+      'const { execFile } = require("node:child_process");',
+      'const { promisify } = require("node:util");',
+      'const execFileAsync = promisify(execFile);',
+      WIN_EXEC_CLI_FN,
+      'exports.main = async (input) => {',
+      '  const bin = process.env.PI_PATH || "pi";',
+      '  const prompt = String(input?.prompt || "").trim();',
+      '  if (!prompt) return { ok: false, error: "缺少 input.prompt" };',
+      '  try {',
+      '    const { stdout, stderr } = await execCli(bin, ["-p", prompt], { timeout: 120000, maxBuffer: 4 * 1024 * 1024 });',
+      '    return { ok: true, output: stdout.trim(), stderr: stderr.trim() };',
+      '  } catch (err) {',
+      '    return { ok: false, error: err.message, hint: "请安装 pi-coding-agent，设置 PI_PATH（Windows 可指向 pi.cmd）及 ELYFN_WORKER_ENV_ALLOW（含 API Key 与 USERPROFILE/HOME）" };',
+      '  }',
+      '};',
+      'exports.testCases = [{ input: { prompt: "" }, expected: { ok: false, error: "缺少 input.prompt" } }];',
+    ].join('\n'),
+  },
+  gh: {
+    folder: 'agents',
+    file: 'gh_cli.js',
+    code: [
+      'const { execFile } = require("node:child_process");',
+      'const { promisify } = require("node:util");',
+      'const execFileAsync = promisify(execFile);',
+      WIN_EXEC_CLI_FN,
+      'exports.main = async (input) => {',
+      '  const bin = process.env.GH_CLI_PATH || "gh";',
+      '  const args = Array.isArray(input?.args) && input.args.length ? input.args.map(String) : ["auth", "status"];',
+      '  if (!input?.run) return { ok: true, ready: true, bin, args };',
+      '  try {',
+      '    const { stdout, stderr } = await execCli(bin, args, { timeout: 30000, maxBuffer: 2 * 1024 * 1024 });',
+      '    return { ok: true, stdout: stdout.trim(), stderr: stderr.trim() };',
+      '  } catch (err) {',
+      '    return { ok: false, error: err.message, hint: "请在宿主机部署 elyfn，设置 GH_CLI_PATH（gh / gh.exe）与 ELYFN_WORKER_ENV_ALLOW=HOME,GH_CONFIG_DIR（Windows 为 USERPROFILE,APPDATA）" };',
+      '  }',
+      '};',
+      'exports.testCases = [{ input: { run: false }, expected: { ok: true, ready: true, bin: process.env.GH_CLI_PATH || "gh", args: ["auth", "status"] } }];',
+    ].join('\n'),
+  },
+};
+
 function renderManageHtml() {
+  const safeTemplatesJson = JSON.stringify(STARTER_TEMPLATES).replace(/<\//g, '<\\/');
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -107,28 +212,7 @@ function renderManageHtml() {
     const adminKey = () => sessionStorage.getItem(K_ADMIN) || '';
     const execKey = () => sessionStorage.getItem(K_EXEC) || '';
 
-    const TEMPLATES = {
-      js: {
-        folder: 'demo', file: 'hello.js',
-        code: 'exports.main = async (input) => ({\\n  ok: true,\\n  greeting: "hello " + (input?.name || "atlas"),\\n  ts: new Date().toISOString(),\\n});\\nexports.testCases = [\\n  { input: { name: "ci" }, expected: { ok: true, greeting: "hello ci", ts: undefined } }\\n].map(c => ({ input: c.input, expected: { ok: true, greeting: c.expected.greeting } }));\\n// 提示: 去掉动态时间戳即可直接通过严格深度比较 testCases:\\nexports.main = async (input) => ({ ok: true, greeting: "hello " + (input?.name || "atlas") });\\nexports.testCases = [{ input: { name: "ci" }, expected: { ok: true, greeting: "hello ci" } }];'
-      },
-      ts: {
-        folder: 'demo', file: 'typed.ts',
-        code: 'interface GreetIn { name: string; }\\nexport async function main(input: GreetIn): Promise<{ greeting: string }> {\\n  return { greeting: \`hello \${input.name || "world"}\` };\\n}\\nexport const testCases = [{ input: { name: "ts" }, expected: { greeting: "hello ts" } }];'
-      },
-      agy: {
-        folder: 'agents', file: 'ask_agy.js',
-        code: 'const { execFile } = require("node:child_process");\\nconst { promisify } = require("node:util");\\nconst execFileAsync = promisify(execFile);\\nexports.main = async (input) => {\\n  const bin = process.env.AGY_PATH || "agy";\\n  const prompt = String(input?.prompt || "").trim();\\n  if (!prompt) return { ok: false, error: "缺少 input.prompt" };\\n  try {\\n    const { stdout, stderr } = await execFileAsync(bin, ["-p", prompt, "--output-format", "json"], { timeout: 120000, maxBuffer: 4 * 1024 * 1024 });\\n    return { ok: true, output: stdout.trim(), stderr: stderr.trim() };\\n  } catch (err) {\\n    return { ok: false, error: err.message, hint: "请确认宿主已部署 elyfn 且设置 AGY_PATH（如 /usr/bin/agy）并已允许 HOME 环境变量" };\\n  }\\n};\\nexports.testCases = [{ input: { prompt: "" }, expected: { ok: false, error: "缺少 input.prompt" } }];'
-      },
-      pi: {
-        folder: 'agents', file: 'ask_pi.js',
-        code: 'const { execFile } = require("node:child_process");\\nconst { promisify } = require("node:util");\\nconst execFileAsync = promisify(execFile);\\nexports.main = async (input) => {\\n  const bin = process.env.PI_PATH || "pi";\\n  const prompt = String(input?.prompt || "").trim();\\n  if (!prompt) return { ok: false, error: "缺少 input.prompt" };\\n  try {\\n    const { stdout, stderr } = await execFileAsync(bin, ["-p", prompt], { timeout: 120000, maxBuffer: 4 * 1024 * 1024 });\\n    return { ok: true, output: stdout.trim(), stderr: stderr.trim() };\\n  } catch (err) {\\n    return { ok: false, error: err.message, hint: "请安装 @earendil-works/pi-coding-agent 并设置 PI_PATH 与对应模型 API Key (ELYFN_WORKER_ENV_ALLOW)" };\\n  }\\n};\\nexports.testCases = [{ input: { prompt: "" }, expected: { ok: false, error: "缺少 input.prompt" } }];'
-      },
-      gh: {
-        folder: 'agents', file: 'gh_cli.js',
-        code: 'const { execFile } = require("node:child_process");\\nconst { promisify } = require("node:util");\\nconst execFileAsync = promisify(execFile);\\nexports.main = async (input) => {\\n  const bin = process.env.GH_CLI_PATH || "gh";\\n  const args = Array.isArray(input?.args) && input.args.length ? input.args.map(String) : ["auth", "status"];\\n  if (!input?.run) return { ok: true, ready: true, bin, args };\\n  try {\\n    const { stdout, stderr } = await execFileAsync(bin, args, { timeout: 30000, maxBuffer: 2 * 1024 * 1024 });\\n    return { ok: true, stdout: stdout.trim(), stderr: stderr.trim() };\\n  } catch (err) {\\n    return { ok: false, error: err.message, hint: "请在宿主机部署 elyfn 或挂载 gh，并配置 GH_CLI_PATH 与 ELYFN_WORKER_ENV_ALLOW=HOME,GH_CONFIG_DIR" };\\n  }\\n};\\nexports.testCases = [{ input: { run: false }, expected: { ok: true, ready: true, bin: process.env.GH_CLI_PATH || "gh", args: ["auth", "status"] } }];'
-      }
-    };
+    const TEMPLATES = ${safeTemplatesJson};
 
     function showOut(obj) {
       $('outputBox').textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
@@ -258,4 +342,4 @@ function renderManageHtml() {
 </html>`;
 }
 
-module.exports = { renderManageHtml };
+module.exports = { renderManageHtml, STARTER_TEMPLATES };

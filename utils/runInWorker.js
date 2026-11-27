@@ -10,19 +10,42 @@ const pools = {
 };
 const runningWorkers = new Set();
 
-const SAFE_BASE_ENV_KEYS = new Set(['NODE_ENV', 'PATH', 'TZ', 'LANG', 'LC_ALL', 'LC_CTYPE', 'AGY_PATH', 'PI_PATH', 'GH_CLI_PATH']);
+const SAFE_BASE_ENV_UPPER = new Set([
+  'NODE_ENV',
+  'PATH',
+  'PATHEXT',
+  'SYSTEMROOT',
+  'WINDIR',
+  'COMSPEC',
+  'TEMP',
+  'TMP',
+  'TZ',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'AGY_PATH',
+  'PI_PATH',
+  'GH_CLI_PATH',
+]);
 
 /**
  * 构造隔离的 Worker 环境变量：
  * - 仅透传基础运行变量、ELYFN_FN_* 自定义函数变量以及 ELYFN_WORKER_ENV_ALLOW 白名单变量；
- * - 显式剥离宿主/同容器内其它服务密钥（如 GITHUB_TOKEN、ELYFN_ADMIN_KEY、BLUEPRINT_SAVE_KEY 等）。
+ * - 显式剥离宿主/同容器内其它服务密钥（如 GITHUB_TOKEN、ELYFN_ADMIN_KEY、BLUEPRINT_SAVE_KEY 等）；
+ * - 兼容 Windows 混合大小写系统变量（如 Path、SystemRoot、ComSpec、PATHEXT、TEMP）。
  */
-function buildWorkerEnv(sourceEnv = process.env, allowList = config.WORKER_ENV_ALLOW) {
-  const allowSet = new Set(Array.isArray(allowList) ? allowList : []);
+function buildWorkerEnv(sourceEnv = process.env, allowList = config.WORKER_ENV_ALLOW, platform = process.platform) {
+  const allowArr = Array.isArray(allowList) ? allowList : [];
+  const allowSet = new Set(allowArr);
+  const allowUpperSet = platform === 'win32' ? new Set(allowArr.map((k) => String(k).toUpperCase())) : null;
   const cleanEnv = {};
   for (const [key, value] of Object.entries(sourceEnv || {})) {
     if (value === undefined) continue;
-    if (SAFE_BASE_ENV_KEYS.has(key) || key.startsWith('ELYFN_FN_') || allowSet.has(key)) {
+    const upperKey = key.toUpperCase();
+    const isSafeBase = SAFE_BASE_ENV_UPPER.has(upperKey);
+    const isFnPrefixed = key.startsWith('ELYFN_FN_') || (platform === 'win32' && upperKey.startsWith('ELYFN_FN_'));
+    const isExplicitlyAllowed = allowSet.has(key) || (allowUpperSet ? allowUpperSet.has(upperKey) : false);
+    if (isSafeBase || isFnPrefixed || isExplicitlyAllowed) {
       cleanEnv[key] = String(value);
     }
   }
