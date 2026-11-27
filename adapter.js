@@ -1,11 +1,37 @@
 // adapter.js
+const { Transform } = require('stream');
 const config = require('./config');
 
 // Multipart 表单边界与头部预留空间（64KB），避免刚好等于 MAX_FILE_SIZE 的文件被提前 413 拦截
 const MULTIPART_OVERHEAD_BYTES = 64 * 1024;
 
-function toWebRequest(req) {
-  const protocol = req.socket.encrypted ? 'https' : 'http';
+class PayloadTooLargeError extends Error {
+  constructor(limit) {
+    super(`Payload too large (max ${limit} bytes)`);
+    this.status = 413;
+  }
+}
+
+/**
+ * 流式字节计数限制器：同时防御带 Content-Length 与 Transfer-Encoding: chunked 的超大请求体，
+ * 防止绕过头部校验导致内存打爆。
+ */
+function createByteLimitStream(limit) {
+  let received = 0;
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      received += chunk.length;
+      if (received > limit) {
+        callback(new PayloadTooLargeError(limit));
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+}
+
+function toWebRequest(req, limit) {
+  const protocol = req.socket && req.socket.encrypted ? 'https' : 'http';
   const host = req.headers.host || 'localhost';
   const url = new URL(req.url, `${protocol}://${host}`);
   const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
@@ -14,7 +40,9 @@ function toWebRequest(req) {
     headers: req.headers,
   };
   if (hasBody) {
-    init.body = req;
+    const limiter = createByteLimitStream(limit);
+    req.pipe(limiter);
+    init.body = limiter;
     init.duplex = 'half';
   }
   return new Request(url, init);
@@ -45,16 +73,31 @@ function createNodeAdapter(app) {
         return;
       }
 
-      const webReq = toWebRequest(nodeReq);
+      const webReq = toWebRequest(nodeReq, limit);
       const webRes = await app.fetch(webReq);
       await writeNodeResponse(webRes, nodeRes);
     } catch (err) {
+      const isTooLarge =
+        err instanceof PayloadTooLargeError ||
+        (err && err.cause instanceof PayloadTooLargeError) ||
+        (err && err.status === 413);
+      if (isTooLarge) {
+        if (!nodeRes.headersSent) {
+          nodeRes.statusCode = 413;
+          nodeRes.setHeader('Content-Type', 'application/json');
+          nodeRes.end(JSON.stringify({ error: 'Payload too large' }));
+        }
+        nodeReq.destroy();
+        return;
+      }
       console.error('Unhandled adapter error:', err);
-      nodeRes.statusCode = 500;
-      nodeRes.setHeader('Content-Type', 'application/json');
-      nodeRes.end(JSON.stringify({ error: 'Internal Server Error' }));
+      if (!nodeRes.headersSent) {
+        nodeRes.statusCode = 500;
+        nodeRes.setHeader('Content-Type', 'application/json');
+        nodeRes.end(JSON.stringify({ error: 'Internal Server Error' }));
+      }
     }
   };
 }
 
-module.exports = { createNodeAdapter };
+module.exports = { createNodeAdapter, createByteLimitStream, PayloadTooLargeError };

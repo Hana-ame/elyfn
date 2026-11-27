@@ -7,6 +7,9 @@ const { cleanupTmpFiles } = require('./utils/cleanupTmp');
 const { waitForWorkers, terminateAllWorkers } = require('./utils/runInWorker');
 
 const server = createServer(createNodeAdapter(app));
+// 防止慢速连接占坑（Slowloris）
+server.headersTimeout = 15000;
+server.requestTimeout = Math.max(30000, config.EXECUTION_TIMEOUT_MS + 10000);
 
 async function start() {
   // 启动前清理可能因上次异常退出残留的 .tmp-* 文件
@@ -36,6 +39,11 @@ async function shutdown(signal) {
     console.log('elyfn server stopped cleanly.');
     process.exit(0);
   });
+
+  // 立即关闭空闲 Keep-Alive 连接（如 Nginx 上游长连接），避免停机一直卡到兜底超时
+  if (typeof server.closeIdleConnections === 'function') {
+    server.closeIdleConnections();
+  }
 
   // 兜底硬超时，防止长连接阻止退出
   setTimeout(async () => {

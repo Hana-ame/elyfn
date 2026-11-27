@@ -182,3 +182,21 @@ test('end-to-end upload, catalog, execute, env isolation, rollback, timeout, con
     await fs.rm(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('adapter.createByteLimitStream aborts chunked payloads exceeding limit with 413', async () => {
+  const { Readable } = require('node:stream');
+  const { createByteLimitStream, PayloadTooLargeError } = require('../adapter');
+
+  const limiter = createByteLimitStream(16);
+  const src = Readable.from([Buffer.from('1234567890'), Buffer.from('abcdefghij')]);
+
+  await assert.rejects(
+    async () => {
+      src.pipe(limiter);
+      for await (const _chunk of limiter) {
+        // consume
+      }
+    },
+    (err) => err instanceof PayloadTooLargeError && err.status === 413
+  );
+});
