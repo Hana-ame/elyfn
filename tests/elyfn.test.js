@@ -260,3 +260,155 @@ test('async execution returns 202 jobId and GET /jobs/:id reports running -> com
     await fs.rm(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('async execution records failed status and error when worker throws', async () => {
+  const { getJobStatus } = require('../handlers/jobs');
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'elyfn-async-fail-'));
+  const prevBaseDir = config.BASE_DIR;
+  config.BASE_DIR = tmpDir;
+
+  try {
+    const code = `
+      exports.main = async (input) => {
+        if (input && input.boom) throw new Error('intentional async failure');
+        return { ok: true };
+      };
+      exports.testCases = [{ input: { boom: false }, expected: { ok: true } }];
+    `;
+    const setUpload = { status: 200 };
+    await uploadHandler({
+      params: { folder: 'faildemo', filename: 'boom.js' },
+      body: { file: makeFileBlob(code) },
+      set: setUpload,
+    });
+    assert.equal(setUpload.status, 201);
+
+    const setExec = { status: 200 };
+    const accepted = await executeHandler({
+      params: { folder: 'faildemo', filename: 'boom' },
+      body: { boom: true },
+      query: { async: '1' },
+      set: setExec,
+    });
+    assert.equal(setExec.status, 202);
+
+    let polled;
+    for (let i = 0; i < 30; i++) {
+      polled = await getJobStatus({ params: { id: accepted.jobId }, set: { status: 200 } });
+      if (polled.status === 'completed' || polled.status === 'failed') break;
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    assert.equal(polled.status, 'failed');
+    assert.ok(String(polled.error).includes('intentional async failure'));
+  } finally {
+    config.BASE_DIR = prevBaseDir;
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('HTTP router + auth middleware enforce EXEC_KEY/ADMIN_KEY on /catalog, /jobs, and ?async=1', async () => {
+  const http = require('node:http');
+  const { createNodeAdapter } = require('../adapter');
+  const app = require('../app');
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'elyfn-http-test-'));
+  const prevBaseDir = config.BASE_DIR;
+  const prevAdminKey = config.ADMIN_KEY;
+  const prevExecKey = config.EXEC_KEY;
+  config.BASE_DIR = tmpDir;
+  config.ADMIN_KEY = 'http-admin-secret';
+  config.EXEC_KEY = 'http-exec-secret';
+
+  await fs.mkdir(path.join(tmpDir, 'httpdemo'), { recursive: true });
+  await fs.writeFile(
+    path.join(tmpDir, 'httpdemo', 'add.js'),
+    'exports.main = (input) => ({ sum: Number(input.a || 0) + Number(input.b || 0) });',
+    'utf-8'
+  );
+
+  const server = http.createServer(createNodeAdapter(app));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+
+  const requestJson = (method, reqPath, { headers = {}, body } = {}) =>
+    new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: reqPath,
+          method,
+          headers: {
+            ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+            ...headers,
+          },
+        },
+        (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf-8');
+            let json = null;
+            try {
+              json = JSON.parse(raw);
+            } catch {
+              // ignore non-json
+            }
+            resolve({ status: res.statusCode, raw, json });
+          });
+        }
+      );
+      req.on('error', reject);
+      if (body !== undefined) req.write(JSON.stringify(body));
+      req.end();
+    });
+
+  try {
+    // 1. Unauthenticated access to /catalog and /jobs rejected when EXEC_KEY is set
+    const unauthCatalog = await requestJson('GET', '/catalog');
+    assert.equal(unauthCatalog.status, 401);
+    const unauthJobs = await requestJson('GET', '/jobs');
+    assert.equal(unauthJobs.status, 401);
+
+    // 2. EXEC_KEY cannot hit /manage/list (403)
+    const execManage = await requestJson('GET', '/manage/list', {
+      headers: { Authorization: 'Bearer http-exec-secret' },
+    });
+    assert.equal(execManage.status, 403);
+
+    // 3. Valid EXEC_KEY can submit ?async=1 and poll GET /jobs/:id
+    const execAsync = await requestJson('POST', '/httpdemo/add?async=1', {
+      headers: { Authorization: 'Bearer http-exec-secret' },
+      body: { a: 19, b: 23 },
+    });
+    assert.equal(execAsync.status, 202);
+    assert.equal(execAsync.json.async, true);
+    assert.ok(execAsync.json.jobId);
+
+    let jobRes;
+    for (let i = 0; i < 30; i++) {
+      jobRes = await requestJson('GET', `/jobs/${execAsync.json.jobId}`, {
+        headers: { Authorization: 'Bearer http-exec-secret' },
+      });
+      if (jobRes.json && jobRes.json.status !== 'running') break;
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    assert.equal(jobRes.status, 200);
+    assert.equal(jobRes.json.status, 'completed');
+    assert.deepEqual(jobRes.json.result, { sum: 42 });
+
+    // 4. GET /jobs lists the completed job
+    const jobsList = await requestJson('GET', '/jobs', {
+      headers: { Authorization: 'Bearer http-exec-secret' },
+    });
+    assert.equal(jobsList.status, 200);
+    assert.ok(jobsList.json.jobs.some((j) => j.id === execAsync.json.jobId));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    config.BASE_DIR = prevBaseDir;
+    config.ADMIN_KEY = prevAdminKey;
+    config.EXEC_KEY = prevExecKey;
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+});
