@@ -2,7 +2,7 @@
 
 重构后的 **elyfn** 面向「**开发者独占上传与调试权限、公网用户仅调用执行接口**」的自托管场景，移除了冗余的 `vm` 沙箱与手写远程模块缓存，新增读写权限分离、独立并发/内存上限、4 级自动降级 TypeScript 编译、串行化原子热更新、优雅停机，并支持 **Docker**、**常规 Linux/macOS/Windows** 与 **Android Termux** 三种部署方式。
 
-> **✅ 测试状态（v2.2）：** 已内置 `node:test` 回归测试（`npm test` / `tests/elyfn.test.js`），实测跑通上传 `.js`、`GET /catalog` 只读目录、公网执行、Worker 环境变量隔离（验证宿主密钥不泄露）、热更新失败回滚、504 超时强杀、429 并发限流与原子删除；Docker / systemd / Termux 部署与 `.ts` 降级链建议在目标环境配合 `smoke-test.sh` 复核。
+> **✅ 测试状态（v2.3）：** 已内置 `node:test` 回归测试（`npm test` / `tests/elyfn.test.js`），实测跑通上传 `.js`、`GET /catalog` 只读目录、公网执行、后台异步执行（`?async=1` 返回 `202` + `GET /jobs/:id` 轮询）、Worker 环境变量隔离（验证宿主密钥不泄露）、热更新失败回滚、504 超时强杀、429 并发限流与原子删除；Docker / systemd / Termux 部署与 `.ts` 降级链建议在目标环境配合 `smoke-test.sh` 复核。
 
 ## 核心特性
 
