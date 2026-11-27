@@ -4,8 +4,8 @@ const config = require('../config');
 
 const jobs = new Map();
 
-/** Evict expired finished jobs or oldest entries when exceeding MAX_JOBS. */
-function pruneJobs() {
+/** Remove only finished jobs whose TTL has elapsed. Safe for read paths (GET /jobs). */
+function pruneExpiredJobs() {
   const now = Date.now();
   const ttl = config.JOB_TTL_MS || 1800000;
   for (const [id, job] of jobs.entries()) {
@@ -13,7 +13,20 @@ function pruneJobs() {
       jobs.delete(id);
     }
   }
-  const maxJobs = config.MAX_JOBS || 200;
+}
+
+/** Evict oldest finished jobs first (then oldest overall) until size < maxJobs before inserting. */
+function evictForInsert() {
+  pruneExpiredJobs();
+  const maxJobs = Math.max(1, config.MAX_JOBS || 200);
+  if (jobs.size >= maxJobs) {
+    for (const [id, job] of jobs.entries()) {
+      if (jobs.size < maxJobs) break;
+      if (job.status !== 'running') {
+        jobs.delete(id);
+      }
+    }
+  }
   while (jobs.size >= maxJobs) {
     const oldestKey = jobs.keys().next().value;
     if (!oldestKey) break;
@@ -22,7 +35,7 @@ function pruneJobs() {
 }
 
 function createJob({ folder, name }) {
-  pruneJobs();
+  evictForInsert();
   const now = Date.now();
   const id = crypto.randomUUID();
   const job = {
@@ -68,12 +81,12 @@ function failJob(id, err) {
 }
 
 function getJob(id) {
-  pruneJobs();
+  pruneExpiredJobs();
   return jobs.get(id) || null;
 }
 
 function listJobs() {
-  pruneJobs();
+  pruneExpiredJobs();
   return Array.from(jobs.values())
     .reverse()
     .map(({ id, folder, name, status, createdAt, startedAt, finishedAt, durationMs, error }) => ({

@@ -30,6 +30,10 @@ module.exports = async ({ params, body, query, request, set }) => {
     await fs.access(filePath);
 
     if (isAsyncRequested(request, query)) {
+      if (!runInWorker.hasWorkerSlot('execute')) {
+        set.status = 429;
+        return { error: `Too Many Requests: execute concurrency limit (${config.MAX_CONCURRENCY || 8}) reached` };
+      }
       const job = createJob({ folder, name: baseName });
       runInWorker(filePath, 'execute', body, { timeoutMs: config.ASYNC_TIMEOUT_MS })
         .then(({ result }) => {

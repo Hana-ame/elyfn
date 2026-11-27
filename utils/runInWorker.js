@@ -128,6 +128,11 @@ function getActiveWorkers(taskType = 'execute') {
   return (pools[taskType] || pools.execute).active;
 }
 
+function hasWorkerSlot(taskType = 'execute') {
+  const poolKey = taskType === 'test' ? 'test' : 'execute';
+  return pools[poolKey].active < getPoolLimit(poolKey);
+}
+
 async function waitForWorkers(timeoutMs = 6000) {
   const start = Date.now();
   while (runningWorkers.size > 0 && Date.now() - start < timeoutMs) {
@@ -143,5 +148,6 @@ async function terminateAllWorkers() {
 module.exports = runInWorker;
 module.exports.buildWorkerEnv = buildWorkerEnv;
 module.exports.getActiveWorkers = getActiveWorkers;
+module.exports.hasWorkerSlot = hasWorkerSlot;
 module.exports.waitForWorkers = waitForWorkers;
 module.exports.terminateAllWorkers = terminateAllWorkers;

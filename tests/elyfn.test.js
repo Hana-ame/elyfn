@@ -412,3 +412,53 @@ test('HTTP router + auth middleware enforce EXEC_KEY/ADMIN_KEY on /catalog, /job
     await fs.rm(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('async execution rejects with 429 when pool saturated and jobStore preserves running jobs on prune', async () => {
+  const jobStore = require('../utils/jobStore');
+
+  const prevMaxJobs = config.MAX_JOBS;
+  config.MAX_JOBS = 2;
+  try {
+    const jRunning = jobStore.createJob({ folder: 'p', name: 'long' });
+    const jDone1 = jobStore.createJob({ folder: 'p', name: 'fast1' });
+    jobStore.completeJob(jDone1.id, { ok: 1 });
+    // Creating a third job should evict finished jDone1, NOT running jRunning
+    const jRunning2 = jobStore.createJob({ folder: 'p', name: 'long2' });
+    assert.ok(jobStore.getJob(jRunning.id), 'active running job should not be evicted before finished jobs');
+    assert.equal(jobStore.getJob(jDone1.id), null, 'finished job should be evicted first');
+    jobStore.completeJob(jRunning.id, { done: true });
+    jobStore.completeJob(jRunning2.id, { done: true });
+  } finally {
+    config.MAX_JOBS = prevMaxJobs;
+  }
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'elyfn-async-429-'));
+  const prevBaseDir = config.BASE_DIR;
+  const prevConc = config.MAX_CONCURRENCY;
+  config.BASE_DIR = tmpDir;
+  config.MAX_CONCURRENCY = 1;
+
+  try {
+    await fs.mkdir(path.join(tmpDir, 'sat'), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpDir, 'sat', 'hold.js'),
+      'exports.main = async () => { await new Promise((r) => setTimeout(r, 250)); return { ok: true }; };',
+      'utf-8'
+    );
+
+    const set1 = { status: 200 };
+    const res1 = await executeHandler({ params: { folder: 'sat', filename: 'hold' }, body: {}, query: { async: '1' }, set: set1 });
+    assert.equal(set1.status, 202);
+    assert.ok(res1.jobId);
+
+    const set2 = { status: 200 };
+    await executeHandler({ params: { folder: 'sat', filename: 'hold' }, body: {}, query: { async: '1' }, set: set2 });
+    assert.equal(set2.status, 429);
+
+    await runInWorker.waitForWorkers(2000);
+  } finally {
+    config.BASE_DIR = prevBaseDir;
+    config.MAX_CONCURRENCY = prevConc;
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+});
