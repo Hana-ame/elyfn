@@ -56,9 +56,23 @@ jobs:
             elyfn:ci
           trap 'docker rm -f elyfn-ci >/dev/null 2>&1 || true' EXIT
 
+          # 断言统一用「先取 body 再 bash 模式匹配」，不用 `curl | grep -q`：
+          # pipefail 下 grep 提前退出会让 curl 收到 SIGPIPE，整条管线被误判为失败。
+          expect() {
+            local label=$1 pat=$2 body=$3
+            if [[ $body != *"$pat"* ]]; then
+              echo "::error::$label: expected pattern $pat"
+              echo "--- body ---"
+              echo "$body" | head -c 800
+              exit 1
+            fi
+            echo "✓ $label"
+          }
+
           ready=0
           for i in $(seq 1 40); do
-            if curl -fsS http://127.0.0.1:3000/ 2>/dev/null | grep -q "elyfn"; then
+            body=$(curl -sS http://127.0.0.1:3000/ 2>/dev/null) || body=""
+            if [[ $body == *elyfn* ]]; then
               ready=1
               echo "✓ server answered after ${i}s"
               break
@@ -76,17 +90,19 @@ jobs:
             exit 1
           fi
 
-          curl -fsS http://127.0.0.1:3000/catalog | grep -q '"success":true'
+          expect "catalog empty" '"success":true' "$(curl -sS http://127.0.0.1:3000/catalog)"
 
-          curl -fsS -X PUT \
+          expect "upload square.js" '"success":true' "$(curl -sS -X PUT \
             -H "Authorization: Bearer ci-admin-key" \
             -F "file=@examples/square.js;filename=square.js" \
-            http://127.0.0.1:3000/ci/square.js | grep -q '"success":true'
+            http://127.0.0.1:3000/ci/square.js)"
 
-          curl -fsS http://127.0.0.1:3000/catalog | grep -q '"square"'
-          curl -fsS -X POST -H "Content-Type: application/json" -d '{"x":6}' \
-            http://127.0.0.1:3000/ci/square | grep -q '"square":36'
+          expect "catalog lists square" '"square"' "$(curl -sS http://127.0.0.1:3000/catalog)"
 
-          curl -fsS -X DELETE \
+          expect "execute square(6) = 36" '"square":36' "$(curl -sS -X POST \
+            -H "Content-Type: application/json" -d '{"x":6}' \
+            http://127.0.0.1:3000/ci/square)"
+
+          expect "delete square.js" '"success":true' "$(curl -sS -X DELETE \
             -H "Authorization: Bearer ci-admin-key" \
-            http://127.0.0.1:3000/manage/ci/square | grep -q '"success":true'
+            http://127.0.0.1:3000/manage/ci/square)"
