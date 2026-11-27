@@ -105,6 +105,14 @@ curl -X POST \
   -H "Content-Type: application/json" \
   -d '{"name": "Alice"}' \
   http://127.0.0.1:3000/demo/greet
+
+# 后台异步执行（立即返回 202 + jobId）并轮询结果
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"x": 5}' \
+  "http://127.0.0.1:3000/math/square?async=1"
+
+curl http://127.0.0.1:3000/jobs/<jobId>
 ```
 
 ### 3. 管理与下载（需 `ADMIN_KEY`）
@@ -126,7 +134,10 @@ curl -X DELETE -H "Authorization: Bearer your-strong-secret" http://127.0.0.1:30
 | `ELYFN_MAX_CONCURRENCY` | `8` | 公网执行 Worker 最大并发数（超限返回 429） |
 | `ELYFN_MAX_TEST_CONCURRENCY` | `2` | 管理员上传测试 Worker 最大并发数（与公网隔离） |
 | `ELYFN_MAX_WORKER_MEM_MB` | `64` | 单个 Worker 老生代内存上限（MB） |
-| `ELYFN_TIMEOUT_MS` | `5000` | 单次执行超时时间（毫秒） |
+| `ELYFN_TIMEOUT_MS` | `5000` | 单次同步执行超时时间（毫秒） |
+| `ELYFN_ASYNC_TIMEOUT_MS` | `300000` | 后台异步任务（`?async=1`）超时时间（毫秒） |
+| `ELYFN_JOB_TTL_MS` | `1800000` | 已完成异步任务在内存中的保留时长（毫秒） |
+| `ELYFN_MAX_JOBS` | `200` | 内存中最多保留的异步任务条数 |
 | `ELYFN_MAX_FILE_SIZE` | `2097152` (2MB) | 上传文件大小上限（字节） |
 | `ELYFN_MAX_BODY_SIZE` | `1048576` (1MB) | POST 请求体大小上限（字节） |
 | `ELYFN_BASE_DIR` | `<项目根>/functions` | 函数存储目录（Docker 镜像内为 `/app/functions`，由 compose 指定） |
