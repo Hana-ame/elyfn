@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test:
+    name: Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 22]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Syntax check all JS files
+        run: |
+          for f in *.js handlers/*.js utils/*.js tests/*.js; do
+            node --check "$f"
+          done
+
+      - name: Install production dependencies
+        run: npm install --omit=dev
+
+      - name: Run unit & end-to-end tests
+        run: npm test
+
+  docker-smoke:
+    name: Docker Build & Smoke
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t elyfn:ci .
+
+      - name: Run container smoke test
+        run: |
+          docker run -d --rm --name elyfn-ci \
+            -p 127.0.0.1:3000:3000 \
+            -e ELYFN_ADMIN_KEY=ci-admin-key \
+            elyfn:ci
+          trap 'docker stop elyfn-ci >/dev/null 2>&1 || true' EXIT
+
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:3000/ | grep -q "elyfn"; then
+              break
+            fi
+            sleep 0.5
+          done
+
+          curl -fsS http://127.0.0.1:3000/ | grep -q "elyfn"
+          curl -fsS http://127.0.0.1:3000/catalog | grep -q '"success":true'
+
+          curl -fsS -X PUT \
+            -H "Authorization: Bearer ci-admin-key" \
+            -F "file=@examples/square.js;filename=square.js" \
+            http://127.0.0.1:3000/ci/square.js | grep -q '"success":true'
+
+          curl -fsS http://127.0.0.1:3000/catalog | grep -q '"square"'
+          curl -fsS -X POST -H "Content-Type: application/json" -d '{"x":6}' \
+            http://127.0.0.1:3000/ci/square | grep -q '"square":36'
+
+          curl -fsS -X DELETE \
+            -H "Authorization: Bearer ci-admin-key" \
+            http://127.0.0.1:3000/manage/ci/square | grep -q '"success":true'
