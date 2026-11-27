@@ -57,6 +57,13 @@ function loadDotEnv() {
 
 loadDotEnv();
 
+function parseCsvList(raw) {
+  return String(raw || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 module.exports = {
   ROOT_DIR,
   PORT: Number(process.env.ELYFN_PORT) || 3000,
@@ -78,4 +85,12 @@ module.exports = {
   // 读写权限分离：
   ADMIN_KEY: process.env.ELYFN_ADMIN_KEY || 'change-me-admin-secret',
   EXEC_KEY: process.env.ELYFN_EXEC_KEY || '',
+
+  // CORS 配置（默认 * 方便子域名/画布前端通过 Bearer Token 调用；生产可收紧为指定 Origin）
+  CORS_ORIGIN: process.env.ELYFN_CORS_ORIGIN !== undefined ? process.env.ELYFN_CORS_ORIGIN : '*',
+
+  // Worker 环境变量白名单（默认仅透传安全基础变量与 ELYFN_FN_* 前缀变量，隔离宿主密钥）
+  WORKER_ENV_ALLOW: parseCsvList(process.env.ELYFN_WORKER_ENV_ALLOW),
+
+  parseEnvValue,
 };

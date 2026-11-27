@@ -10,6 +10,25 @@ const pools = {
 };
 const runningWorkers = new Set();
 
+const SAFE_BASE_ENV_KEYS = new Set(['NODE_ENV', 'PATH', 'TZ', 'LANG', 'LC_ALL', 'LC_CTYPE']);
+
+/**
+ * 构造隔离的 Worker 环境变量：
+ * - 仅透传基础运行变量、ELYFN_FN_* 自定义函数变量以及 ELYFN_WORKER_ENV_ALLOW 白名单变量；
+ * - 显式剥离宿主/同容器内其它服务密钥（如 GITHUB_TOKEN、ELYFN_ADMIN_KEY、BLUEPRINT_SAVE_KEY 等）。
+ */
+function buildWorkerEnv(sourceEnv = process.env, allowList = config.WORKER_ENV_ALLOW) {
+  const allowSet = new Set(Array.isArray(allowList) ? allowList : []);
+  const cleanEnv = {};
+  for (const [key, value] of Object.entries(sourceEnv || {})) {
+    if (value === undefined) continue;
+    if (SAFE_BASE_ENV_KEYS.has(key) || key.startsWith('ELYFN_FN_') || allowSet.has(key)) {
+      cleanEnv[key] = String(value);
+    }
+  }
+  return cleanEnv;
+}
+
 function getPoolLimit(taskType) {
   return taskType === 'test'
     ? (config.MAX_TEST_CONCURRENCY || 2)
@@ -37,6 +56,7 @@ function runInWorker(filePath, taskType, payload = null) {
   try {
     worker = new Worker(path.join(__dirname, 'workerExecutor.js'), {
       workerData: { filePath, taskType, payload },
+      env: buildWorkerEnv(),
       resourceLimits: {
         maxOldGenerationSizeMb: config.MAX_WORKER_MEM_MB || 64,
         maxYoungGenerationSizeMb: 16,
@@ -117,6 +137,7 @@ async function terminateAllWorkers() {
 }
 
 module.exports = runInWorker;
+module.exports.buildWorkerEnv = buildWorkerEnv;
 module.exports.getActiveWorkers = getActiveWorkers;
 module.exports.waitForWorkers = waitForWorkers;
 module.exports.terminateAllWorkers = terminateAllWorkers;

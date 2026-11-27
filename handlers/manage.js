@@ -5,27 +5,70 @@ const config = require('../config');
 const { isValidFolder, isValidFuncName, getBaseName } = require('../utils/validator');
 const { withFunctionLock } = require('../utils/fnLock');
 
+async function scanDeployedFunctions() {
+  await fs.mkdir(config.BASE_DIR, { recursive: true });
+  const entries = await fs.readdir(config.BASE_DIR, { withFileTypes: true });
+  const functions = {};
+
+  for (const dirent of entries) {
+    if (!dirent.isDirectory()) continue;
+    const folderPath = path.join(config.BASE_DIR, dirent.name);
+    const files = await fs.readdir(folderPath);
+    const visible = files
+      .filter((f) => !f.startsWith('.tmp-') && f.endsWith('.js'))
+      .sort();
+    if (visible.length > 0) {
+      functions[dirent.name] = visible;
+    }
+  }
+
+  return functions;
+}
+
 async function listFunctions({ set }) {
   try {
-    await fs.mkdir(config.BASE_DIR, { recursive: true });
-    const entries = await fs.readdir(config.BASE_DIR, { withFileTypes: true });
-    const functions = {};
-
-    for (const dirent of entries) {
-      if (!dirent.isDirectory()) continue;
-      const folderPath = path.join(config.BASE_DIR, dirent.name);
-      const files = await fs.readdir(folderPath);
-      const visible = files.filter((f) => !f.startsWith('.tmp-') && f.endsWith('.js'));
-      if (visible.length > 0) {
-        functions[dirent.name] = visible;
-      }
-    }
-
+    const functions = await scanDeployedFunctions();
     return { success: true, functions };
   } catch (err) {
     console.error('List functions error:', err);
     set.status = 500;
     return { error: 'Failed to list functions' };
+  }
+}
+
+/**
+ * 只读可调用函数目录（不含源码，仅返回 folder/fn 名称与调用路径），
+ * 供普通调用方与前端画布自动拉取函数目录使用。
+ */
+async function getCatalog({ set }) {
+  try {
+    const raw = await scanDeployedFunctions();
+    const functions = {};
+    const endpoints = [];
+
+    for (const folder of Object.keys(raw).sort()) {
+      const names = raw[folder].map((f) => getBaseName(f));
+      functions[folder] = names;
+      for (const name of names) {
+        endpoints.push({
+          folder,
+          name,
+          id: `${folder}/${name}`,
+          endpoint: `/${folder}/${name}`,
+        });
+      }
+    }
+
+    return {
+      success: true,
+      count: endpoints.length,
+      functions,
+      endpoints,
+    };
+  } catch (err) {
+    console.error('Get catalog error:', err);
+    set.status = 500;
+    return { error: 'Failed to load function catalog' };
   }
 }
 
@@ -70,4 +113,4 @@ async function deleteFunction({ params, set }) {
   });
 }
 
-module.exports = { listFunctions, deleteFunction };
+module.exports = { listFunctions, getCatalog, deleteFunction };
