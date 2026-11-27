@@ -159,13 +159,15 @@ test('end-to-end upload, catalog, execute, env isolation, rollback, timeout, con
     });
     assert.equal(setTimeoutRes.status, 504);
 
+    await runInWorker.waitForWorkers(2000);
     config.EXECUTION_TIMEOUT_MS = 2000;
     config.MAX_CONCURRENCY = 1;
-    const p1 = executeHandler({ params: { folder: 'demo', filename: 'slow' }, body: {}, set: { status: 200 } });
-    const set429 = { status: 200 };
-    const p2 = executeHandler({ params: { folder: 'demo', filename: 'slow' }, body: {}, set: set429 });
+    const setP1 = { status: 200 };
+    const setP2 = { status: 200 };
+    const p1 = executeHandler({ params: { folder: 'demo', filename: 'slow' }, body: {}, set: setP1 });
+    const p2 = executeHandler({ params: { folder: 'demo', filename: 'slow' }, body: {}, set: setP2 });
     await Promise.all([p1, p2]);
-    assert.equal(set429.status, 429);
+    assert.deepEqual([setP1.status, setP2.status].sort((a, b) => a - b), [200, 429]);
 
     // 7. Delete cleans up function
     const setDel = { status: 200 };
