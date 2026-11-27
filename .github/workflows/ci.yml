@@ -49,20 +49,33 @@ jobs:
 
       - name: Run container smoke test
         run: |
-          docker run -d --rm --name elyfn-ci \
+          set -uo pipefail
+          docker run -d --name elyfn-ci \
             -p 127.0.0.1:3000:3000 \
             -e ELYFN_ADMIN_KEY=ci-admin-key \
             elyfn:ci
-          trap 'docker stop elyfn-ci >/dev/null 2>&1 || true' EXIT
+          trap 'docker rm -f elyfn-ci >/dev/null 2>&1 || true' EXIT
 
-          for i in $(seq 1 20); do
-            if curl -fsS http://127.0.0.1:3000/ | grep -q "elyfn"; then
+          ready=0
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:3000/ 2>/dev/null | grep -q "elyfn"; then
+              ready=1
+              echo "✓ server answered after ${i}s"
               break
             fi
-            sleep 0.5
+            if [ "$(docker inspect -f '{{.State.Running}}' elyfn-ci 2>/dev/null)" != "true" ]; then
+              echo "::error::container exited before becoming ready"
+              docker logs elyfn-ci || true
+              exit 1
+            fi
+            sleep 1
           done
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::server did not answer within 40s"
+            docker logs elyfn-ci || true
+            exit 1
+          fi
 
-          curl -fsS http://127.0.0.1:3000/ | grep -q "elyfn"
           curl -fsS http://127.0.0.1:3000/catalog | grep -q '"success":true'
 
           curl -fsS -X PUT \
