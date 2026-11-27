@@ -202,3 +202,64 @@ test('adapter.createByteLimitStream aborts chunked payloads exceeding limit with
     (err) => err instanceof PayloadTooLargeError && err.status === 413
   );
 });
+
+test('async execution returns 202 jobId and GET /jobs/:id reports running -> completed result', async () => {
+  const fs = require('node:fs').promises;
+  const os = require('node:os');
+  const path = require('node:path');
+  const config = require('../config');
+  const uploadHandler = require('../handlers/upload');
+  const executeHandler = require('../handlers/execute');
+  const { getJobStatus, listJobStatuses } = require('../handlers/jobs');
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'elyfn-async-test-'));
+  const prevBaseDir = config.BASE_DIR;
+  config.BASE_DIR = tmpDir;
+
+  try {
+    const code = `
+      exports.main = async (input) => {
+        await new Promise((r) => setTimeout(r, 80));
+        return { ok: true, echo: input && input.msg };
+      };
+      exports.testCases = [{ input: { msg: 'hi' }, expected: { ok: true, echo: 'hi' } }];
+    `;
+    const file = new File([code], 'slowecho.js', { type: 'application/javascript' });
+    const setUpload = { status: 200 };
+    await uploadHandler({ params: { folder: 'asyncdemo', filename: 'slowecho.js' }, body: { file }, set: setUpload });
+    assert.equal(setUpload.status, 201);
+
+    const setExec = { status: 200 };
+    const accepted = await executeHandler({
+      params: { folder: 'asyncdemo', filename: 'slowecho' },
+      body: { msg: 'hello-job' },
+      query: { async: '1' },
+      set: setExec,
+    });
+    assert.equal(setExec.status, 202);
+    assert.equal(accepted.async, true);
+    assert.equal(accepted.status, 'running');
+    assert.ok(accepted.jobId);
+
+    // Poll until completed
+    let polled;
+    for (let i = 0; i < 30; i++) {
+      const setJob = { status: 200 };
+      polled = await getJobStatus({ params: { id: accepted.jobId }, set: setJob });
+      if (polled.status === 'completed' || polled.status === 'failed') break;
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    assert.equal(polled.status, 'completed');
+    assert.deepEqual(polled.result, { ok: true, echo: 'hello-job' });
+
+    const listRes = await listJobStatuses();
+    assert.ok(listRes.jobs.some((j) => j.id === accepted.jobId && j.status === 'completed'));
+
+    const setMissing = { status: 200 };
+    await getJobStatus({ params: { id: 'non-existent-id' }, set: setMissing });
+    assert.equal(setMissing.status, 404);
+  } finally {
+    config.BASE_DIR = prevBaseDir;
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+});

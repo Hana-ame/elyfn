@@ -78,6 +78,9 @@ module.exports = {
   MAX_TEST_CONCURRENCY: Number(process.env.ELYFN_MAX_TEST_CONCURRENCY) || 2,
   MAX_WORKER_MEM_MB: Number(process.env.ELYFN_MAX_WORKER_MEM_MB) || 64,
   EXECUTION_TIMEOUT_MS: Number(process.env.ELYFN_TIMEOUT_MS) || 5000,
+  ASYNC_TIMEOUT_MS: Number(process.env.ELYFN_ASYNC_TIMEOUT_MS) || 300000,
+  JOB_TTL_MS: Number(process.env.ELYFN_JOB_TTL_MS) || 1800000,
+  MAX_JOBS: Number(process.env.ELYFN_MAX_JOBS) || 200,
 
   // 函数存储目录（默认位于项目根目录，而非 process.cwd()）
   BASE_DIR: process.env.ELYFN_BASE_DIR || path.join(ROOT_DIR, 'functions'),

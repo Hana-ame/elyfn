@@ -4,8 +4,18 @@ const path = require('path');
 const config = require('../config');
 const { isValidFolder, isValidFuncName, getBaseName } = require('../utils/validator');
 const runInWorker = require('../utils/runInWorker');
+const { createJob, completeJob, failJob } = require('../utils/jobStore');
 
-module.exports = async ({ params, body, set }) => {
+function isAsyncRequested(request, query) {
+  if (query && (query.async === '1' || query.async === 'true')) return true;
+  if (!request || !request.headers) return false;
+  const asyncHeader = String(request.headers.get('x-elyfn-async') || '').toLowerCase();
+  if (asyncHeader === '1' || asyncHeader === 'true') return true;
+  const prefer = String(request.headers.get('prefer') || '').toLowerCase();
+  return prefer.includes('respond-async');
+}
+
+module.exports = async ({ params, body, query, request, set }) => {
   const { folder, filename } = params;
 
   if (!isValidFolder(folder) || !isValidFuncName(filename)) {
@@ -18,6 +28,27 @@ module.exports = async ({ params, body, set }) => {
 
   try {
     await fs.access(filePath);
+
+    if (isAsyncRequested(request, query)) {
+      const job = createJob({ folder, name: baseName });
+      runInWorker(filePath, 'execute', body, { timeoutMs: config.ASYNC_TIMEOUT_MS })
+        .then(({ result }) => {
+          const normalized = typeof result === 'object' && result !== null ? result : { result };
+          completeJob(job.id, normalized);
+        })
+        .catch((err) => {
+          failJob(job.id, err);
+        });
+      set.status = 202;
+      return {
+        ok: true,
+        async: true,
+        jobId: job.id,
+        status: job.status,
+        statusUrl: `/jobs/${job.id}`,
+      };
+    }
+
     const { result } = await runInWorker(filePath, 'execute', body);
 
     if (typeof result === 'object' && result !== null) {

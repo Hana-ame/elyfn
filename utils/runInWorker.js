@@ -41,10 +41,14 @@ function getPoolLimit(taskType) {
  * - 仅在 Worker 真正 exit 后才释放并发配额，防止异步 terminate 期间并发超限 OOM
  * - 退出码为 0 但未返回消息也会立刻失败，避免假性 504 超时
  */
-function runInWorker(filePath, taskType, payload = null) {
+function runInWorker(filePath, taskType, payload = null, options = {}) {
   const poolKey = taskType === 'test' ? 'test' : 'execute';
   const pool = pools[poolKey];
   const limit = getPoolLimit(poolKey);
+  const timeoutMs =
+    typeof options.timeoutMs === 'number' && options.timeoutMs > 0
+      ? options.timeoutMs
+      : config.EXECUTION_TIMEOUT_MS;
 
   if (pool.active >= limit) {
     const err = new Error(`Too Many Requests: ${poolKey} concurrency limit (${limit}) reached`);
@@ -92,7 +96,7 @@ function runInWorker(filePath, taskType, payload = null) {
       const err = new Error('Execution timed out (Worker terminated)');
       err.status = 504;
       finish(reject, err);
-    }, config.EXECUTION_TIMEOUT_MS);
+    }, timeoutMs);
 
     worker.on('message', (msg) => {
       worker.terminate().catch(() => {});

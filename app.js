@@ -6,6 +6,7 @@ const config = require('./config');
 const uploadHandler = require('./handlers/upload');
 const downloadHandler = require('./handlers/download');
 const executeHandler = require('./handlers/execute');
+const { getJobStatus, listJobStatuses } = require('./handlers/jobs');
 const { listFunctions, getCatalog, deleteFunction } = require('./handlers/manage');
 
 function getBearerToken(request) {
@@ -25,7 +26,7 @@ function applyCorsHeaders(set) {
   if (!config.CORS_ORIGIN) return;
   set.headers['Access-Control-Allow-Origin'] = config.CORS_ORIGIN;
   set.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
-  set.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type';
+  set.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-Elyfn-Async, Prefer';
   set.headers['Access-Control-Max-Age'] = '600';
 }
 
@@ -45,8 +46,11 @@ const app = new Elysia()
 
     if (method === 'GET' && pathname === '/') return;
 
-    // 执行接口（POST）与只读函数目录（GET /catalog）：由 EXEC_KEY 保护（未配置则公开；ADMIN_KEY 通用）
-    if (method === 'POST' || (method === 'GET' && pathname === '/catalog')) {
+    // 执行接口（POST）、只读函数目录（GET /catalog）与异步任务轮询（GET /jobs*）：由 EXEC_KEY 保护（未配置则公开；ADMIN_KEY 通用）
+    if (
+      method === 'POST' ||
+      (method === 'GET' && (pathname === '/catalog' || pathname === '/jobs' || pathname.startsWith('/jobs/')))
+    ) {
       if (
         config.EXEC_KEY &&
         !safeTokenEqual(token, config.EXEC_KEY) &&
@@ -85,8 +89,10 @@ const app = new Elysia()
   .get('/manage/list', listFunctions)
   .delete('/manage/:folder/:filename', deleteFunction)
 
-  // 4. 只读函数目录接口（与 POST 执行权限一致，不暴露源码）
+  // 4. 只读函数目录与异步任务轮询接口（与 POST 执行权限一致，不暴露源码）
   .get('/catalog', getCatalog)
+  .get('/jobs', listJobStatuses)
+  .get('/jobs/:id', getJobStatus)
 
   // 5. 核心业务接口
   .get('/', () => ({ message: 'elyfn FaaS Engine is Running' }))
