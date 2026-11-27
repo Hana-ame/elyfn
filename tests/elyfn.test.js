@@ -489,13 +489,14 @@ test('developer UI /manage/ and /admin/ serve HTML shell without exposing secret
   try {
     const manageRes = await fetch(`${baseUrl}/manage/`);
     assert.equal(manageRes.status, 200);
-    assert.match(manageRes.headers.get('content-type') || '', /text\/html/);
+    assert.equal(manageRes.headers.get('content-type'), 'text/html; charset=utf-8');
     const html = await manageRes.text();
     assert.match(html, /elyfn/);
     assert.equal(html.includes('ui-admin-secret'), false);
 
     const adminRes = await fetch(`${baseUrl}/admin`);
     assert.equal(adminRes.status, 200);
+    assert.equal(adminRes.headers.get('content-type'), 'text/html; charset=utf-8');
 
     const listDenied = await fetch(`${baseUrl}/manage/list`);
     assert.equal(listDenied.status, 403);

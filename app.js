@@ -31,6 +31,16 @@ function applyCorsHeaders(set) {
   set.headers['Access-Control-Max-Age'] = '600';
 }
 
+function serveManageUi({ set }) {
+  return new Response(renderManageHtml(), {
+    status: 200,
+    headers: {
+      ...set.headers,
+      'content-type': 'text/html; charset=utf-8',
+    },
+  });
+}
+
 const app = new Elysia()
   // 1. CORS 预检与读写权限分离拦截器（普通人仅可调用与查看只读目录，仅 Admin 可上传/下载源码/删除）
   .onBeforeHandle(({ request, set }) => {
@@ -92,22 +102,10 @@ const app = new Elysia()
   })
 
   // 3. 运维管理接口（仅 ADMIN_KEY；静态外壳页面免密渲染，不含任何密钥与数据）
-  .get('/manage', ({ set }) => {
-    set.headers['Content-Type'] = 'text/html; charset=utf-8';
-    return renderManageHtml();
-  })
-  .get('/manage/', ({ set }) => {
-    set.headers['Content-Type'] = 'text/html; charset=utf-8';
-    return renderManageHtml();
-  })
-  .get('/admin', ({ set }) => {
-    set.headers['Content-Type'] = 'text/html; charset=utf-8';
-    return renderManageHtml();
-  })
-  .get('/admin/', ({ set }) => {
-    set.headers['Content-Type'] = 'text/html; charset=utf-8';
-    return renderManageHtml();
-  })
+  .get('/manage', serveManageUi)
+  .get('/manage/', serveManageUi)
+  .get('/admin', serveManageUi)
+  .get('/admin/', serveManageUi)
   .get('/manage/list', listFunctions)
   .delete('/manage/:folder/:filename', deleteFunction)
 
