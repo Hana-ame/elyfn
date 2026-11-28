@@ -11,7 +11,7 @@ services:
       - ELYFN_BASE_DIR=/app/functions
     ports:
       # 默认仅监听本机，配合 Nginx/Caddy 反向代理；如需直连可改为 "3000:3000"
-      - "127.0.0.1:3000:3000"
+      - "${ELYFN_BIND_ADDR:-127.0.0.1:${ELYFN_PORT:-3000}}:3000"
     volumes:
       # 默认使用命名卷，Docker 会自动继承镜像内 node(UID 1000) 权限，避免宿主机挂载 EACCES 冲突
       # 如需改为宿主机目录挂载，请执行 `mkdir -p functions && chown 1000:1000 functions` 后替换为 ./functions:/app/functions

@@ -64,10 +64,31 @@ function parseCsvList(raw) {
     .filter(Boolean);
 }
 
+function parseBindAddr(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  if (s.startsWith('[')) {
+    const m = s.match(/^\[([^\]]+)\]:(\d+)$/);
+    if (m) return { host: m[1], port: Number(m[2]) };
+    return null;
+  }
+  const idx = s.lastIndexOf(':');
+  if (idx > 0 && idx < s.length - 1) {
+    const host = s.slice(0, idx).trim();
+    const port = Number(s.slice(idx + 1).trim());
+    if (host && Number.isFinite(port) && port >= 1 && port <= 65535) {
+      return { host, port: Math.floor(port) };
+    }
+  }
+  return null;
+}
+
+const _parsedAddr = parseBindAddr(process.env.ELYFN_ADDR || process.env.BIND_ADDR);
+
 module.exports = {
   ROOT_DIR,
-  PORT: Number(process.env.ELYFN_PORT) || 3000,
-  HOST: process.env.ELYFN_HOST || '0.0.0.0',
+  PORT: _parsedAddr?.port || Number(process.env.ELYFN_PORT || process.env.PORT) || 3000,
+  HOST: _parsedAddr?.host || process.env.ELYFN_HOST || process.env.HOST || '0.0.0.0',
   SOCKET_PATH: (process.env.ELYFN_SOCKET || '').trim(),
   SOCKET_MODE: Number.parseInt(process.env.ELYFN_SOCKET_MODE || '0660', 8) || 0o660,
   AGY_PATH: (process.env.AGY_PATH || '').trim(),
